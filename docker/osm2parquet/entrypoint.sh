@@ -52,13 +52,28 @@ START_TIME=$(date +%s)
 EXPORTED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # --- Script and Config Resolution ---
-# Prefer scripts and config from mounted workspace (Git repo); fallback to container image /app
+# Scripts and config are resolved relative to entrypoint.sh from the mounted workspace
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SQL_TEMPLATE="${SCRIPT_DIR}/export_addresses.sql"
-[ ! -f "$SQL_TEMPLATE" ] && SQL_TEMPLATE="/app/export_addresses.sql"
-
 OSMCONF="${SCRIPT_DIR}/osmconf.ini"
-[ ! -f "$OSMCONF" ] && OSMCONF="/app/osmconf.ini"
+
+if [ ! -f "$SQL_TEMPLATE" ]; then
+    echo "****************************************************************"
+    echo " ERROR: SQL template not found: $SQL_TEMPLATE"
+    echo " Cause:  The workspace containing export_addresses.sql is not mounted."
+    echo " Fix:    Ensure the repository workspace is bind-mounted into the container."
+    echo "****************************************************************"
+    exit 1
+fi
+
+if [ ! -f "$OSMCONF" ]; then
+    echo "****************************************************************"
+    echo " ERROR: OSM config not found: $OSMCONF"
+    echo " Cause:  The workspace containing osmconf.ini is not mounted."
+    echo " Fix:    Ensure the repository workspace is bind-mounted into the container."
+    echo "****************************************************************"
+    exit 1
+fi
 
 # Substitute placeholder tokens with actual paths, then pipe to duckdb stdin.
 # getvariable() cannot be used in COPY TO (requires string literal) — sed

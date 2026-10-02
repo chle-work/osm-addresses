@@ -12,7 +12,9 @@ COPY (
         addr_housenumber                  AS number,
         addr_postcode                     AS postcode,
         addr_city                         AS city,
-        geom                              AS geometry
+        geom                              AS geometry,
+        'node'                            AS osm_type,
+        CAST(osm_id AS BIGINT)            AS osm_id
     FROM ST_Read(
         '__INPUT_PBF__',
         layer        = 'points',
@@ -32,7 +34,12 @@ COPY (
         CASE
             WHEN ST_IsValid(geom) THEN ST_PointOnSurface(geom)
             ELSE NULL
-        END AS geometry
+        END AS geometry,
+        CASE
+            WHEN osm_id IS NOT NULL THEN 'relation'
+            ELSE 'way'
+        END AS osm_type,
+        CAST(COALESCE(osm_id, osm_way_id) AS BIGINT) AS osm_id
     FROM ST_Read(
         '__INPUT_PBF__',
         layer        = 'multipolygons',

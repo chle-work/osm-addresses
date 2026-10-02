@@ -12,7 +12,7 @@ To ensure consistent pipeline execution, geographical coverage, and clean Git wo
   DuckDB-based converter (`krizleebear/osm2parquet`) pre-packaging DuckDB CLI + `spatial` extension.
 - **Data Flow:**
   1. `osm-download` pipeline downloads and caches Geofabrik `.osm.pbf` extracts.
-  2. `addresses-parquet` pipeline downloads cached PBF artifacts and runs `docker/osm2parquet/entrypoint.sh` from the checked-out workspace inside the `osm2parquet` container (with fallback to `/app/` in container).
+  2. `addresses-parquet` pipeline downloads cached PBF artifacts and runs `docker/osm2parquet/entrypoint.sh` from the checked-out workspace mounted directly inside the `osm2parquet` container.
   3. DuckDB extracts `addr:housenumber` and `addr:street` features into ZSTD-compressed GeoParquet files.
 
 ---

@@ -31,11 +31,6 @@ ENV HOME=/app
 # This avoids any runtime network access inside Azure DevOps jobs.
 RUN duckdb -c "INSTALL spatial;"
 
-# Default fallback scripts/config for standalone or local container runs.
-# In CI pipelines, Azure DevOps mounts the checked-out workspace directly.
-COPY osmconf.ini export_addresses.sql entrypoint.sh /app/
-RUN chmod +x /app/entrypoint.sh
-
 # Grant 777 permissions to /app so Azure DevOps unprivileged runner user
 # (vsts_azpcontainer UID 1001) can read pre-installed spatial extension at /app/.duckdb/
 RUN chmod -R 777 /app

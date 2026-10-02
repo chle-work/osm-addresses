@@ -18,12 +18,14 @@ Each file contains all address-tagged features (`addr:housenumber` + `addr:stree
 | `postcode` | `varchar` | `addr:postcode` |
 | `city` | `varchar` | `addr:city` |
 | `geometry` | `geometry('epsg:4326')` | Point geometry (WGS84 EPSG:4326) |
+| `osm_type` | `varchar` | Source OSM element type (`node`, `way`, `relation`) |
+| `osm_id` | `int64` | Source OSM element ID |
 
 ### Example Query (DuckDB)
 
 ```sql
 LOAD spatial;
-SELECT street, number, postcode, city, ST_AsText(geometry)
+SELECT street, number, postcode, city, osm_type, osm_id, ST_AsText(geometry)
 FROM read_parquet('DE_germany.addresses.parquet')
 WHERE city = 'München'
 LIMIT 10;

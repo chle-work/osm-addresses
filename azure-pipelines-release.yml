@@ -93,11 +93,13 @@ jobs:
         ### Dataset Schema & Attributes
         | Column | Type | Description |
         | :--- | :--- | :--- |
-        | **\`street\`** | \`VARCHAR\` | Street name (\`addr:street\` or \`name\`) |
-        | **\`number\`** | \`VARCHAR\` | House number (\`addr:housenumber\`) |
-        | **\`postcode\`** | \`VARCHAR\` | Postal code (\`addr:postcode\`) |
-        | **\`city\`** | \`VARCHAR\` | City / Municipality (\`addr:city\`) |
-        | **\`geometry\`** | \`GEOMETRY\` | Point geometry (WGS84 EPSG:4326) |
+        | **`street`** | `VARCHAR` | Street name (`addr:street` or `addr:place`) |
+        | **`number`** | `VARCHAR` | House number (`addr:housenumber`) |
+        | **`postcode`** | `VARCHAR` | Postal code (`addr:postcode`) |
+        | **`city`** | `VARCHAR` | City / Municipality (`addr:city`) |
+        | **`geometry`** | `GEOMETRY` | Point geometry (WGS84 EPSG:4326) |
+        | **`osm_type`** | `VARCHAR` | Source OSM element type (`node`, `way`, `relation`) |
+        | **`osm_id`** | `BIGINT` | Source OSM element ID |
 
         ### Download Assets
         - **\`<CC>_<region>.addresses.parquet\`**: Individual per-region GeoParquet files ($PARQUET_COUNT files available worldwide).
