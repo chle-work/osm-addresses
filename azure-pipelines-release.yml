@@ -1,19 +1,19 @@
 # OSM Address GeoParquet Manual GitHub Release Pipeline
 # Downloads latest per-country GeoParquet build artifacts from the addresses-parquet pipeline,
 # prepares release assets, generates release notes, and publishes a GitHub Release.
-name: addresses-release-pipeline
+name: $(Date:yyyyMMdd)$(Rev:.r)
 
 trigger: none # Manual execution only
 
 parameters:
 - name: releaseTag
-  displayName: 'GitHub Release Tag (e.g. v1.0.0)'
+  displayName: 'GitHub Release Tag (use "auto" for build number e.g. 20261002.1)'
   type: string
-  default: 'v1.0.0'
+  default: 'auto'
 - name: releaseTitle
-  displayName: 'GitHub Release Title'
+  displayName: 'GitHub Release Title (use "auto" for "Release <tag>")'
   type: string
-  default: 'OSM Address GeoParquet Release v1.0.0'
+  default: 'auto'
 - name: specificBuildId
   displayName: 'Specific Build ID (optional: e.g. 248. Leave blank or latest/auto for latest build)'
   type: string
@@ -84,9 +84,26 @@ jobs:
 
         echo "[INFO] Found $PARQUET_COUNT GeoParquet file(s) for release."
 
+        # Resolve Release Tag and Title dynamically
+        RELEASE_TAG="${{ parameters.releaseTag }}"
+        if [ "$RELEASE_TAG" = "auto" ] || [ -z "$RELEASE_TAG" ]; then
+          RELEASE_TAG="$(Build.BuildNumber)"
+        fi
+
+        RELEASE_TITLE="${{ parameters.releaseTitle }}"
+        if [ "$RELEASE_TITLE" = "auto" ] || [ -z "$RELEASE_TITLE" ]; then
+          RELEASE_TITLE="Release $RELEASE_TAG"
+        fi
+
+        echo "[INFO] Release Tag  : $RELEASE_TAG"
+        echo "[INFO] Release Title: $RELEASE_TITLE"
+
+        echo "##vso[task.setvariable variable=RELEASE_TAG]$RELEASE_TAG"
+        echo "##vso[task.setvariable variable=RELEASE_TITLE]$RELEASE_TITLE"
+
         # Generate Release Notes Markdown
         cat <<EOF > release-notes.md
-        ## OSM Address GeoParquet Release (${{ parameters.releaseTag }})
+        ## OSM Address GeoParquet Release ($RELEASE_TAG)
 
         Global ZSTD-compressed GeoParquet datasets containing address-tagged features (\`addr:housenumber\`, \`addr:street\`, \`addr:postcode\`, \`addr:city\`) extracted from OpenStreetMap.
 
@@ -119,8 +136,8 @@ jobs:
       action: 'create'
       target: '$(Build.SourceVersion)'
       tagSource: 'userSpecifiedTag'
-      tag: '${{ parameters.releaseTag }}'
-      title: '${{ parameters.releaseTitle }}'
+      tag: '$(RELEASE_TAG)'
+      title: '$(RELEASE_TITLE)'
       releaseNotesSource: 'filePath'
       releaseNotesFilePath: '$(System.DefaultWorkingDirectory)/release-notes.md'
       assets: |
