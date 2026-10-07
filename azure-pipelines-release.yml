@@ -50,8 +50,9 @@ jobs:
       ${{ if or(eq(parameters.specificBuildId, 'latest'), eq(parameters.specificBuildId, 'auto'), eq(parameters.specificBuildId, '')) }}:
         buildVersionToDownload: 'latest'
       itemPattern: |
+        osm-parquet-[A-Z]*/**
         addresses-parquet-[A-Z]*/**
-        !addresses-parquet-archives/**
+        !*-archives/**
       targetPath: '$(System.DefaultWorkingDirectory)/downloads'
 
   - task: Bash@3
@@ -63,17 +64,21 @@ jobs:
         mkdir -p release-assets
 
         # Move all per-region GeoParquet files and clean up temporary download directory
-        find downloads -name "*.addresses.parquet" -exec mv {} release-assets/ \;
+        find downloads -name "*.parquet" -exec mv {} release-assets/ \;
         rm -rf downloads
 
         PARQUET_COUNT=$(find release-assets -name "*.parquet" | wc -l)
+        ADDRESS_COUNT=$(find release-assets -name "*.addresses.parquet" | wc -l)
+        ROAD_COUNT=$(find release-assets -name "*.roads.parquet" | wc -l)
+        ENTRANCE_COUNT=$(find release-assets -name "*.entrances.parquet" | wc -l)
+
         if [ "$PARQUET_COUNT" -eq 0 ]; then
           echo "****************************************************************"
           echo " ERROR: No GeoParquet (.parquet) files were found in downloaded artifacts!"
           echo ""
           echo " Cause:"
           echo "   The selected build of pipeline definition 6 (addresses-parquet)"
-          echo "   failed or did not publish any 'addresses-parquet-*' artifacts."
+          echo "   failed or did not publish any 'osm-parquet-*' or 'addresses-parquet-*' artifacts."
           echo ""
           echo " Solution:"
           echo "   Pass a successful Build ID into the 'specificBuildId' parameter"
@@ -82,7 +87,7 @@ jobs:
           exit 1
         fi
 
-        echo "[INFO] Found $PARQUET_COUNT GeoParquet file(s) for release."
+        echo "[INFO] Found $PARQUET_COUNT GeoParquet file(s) for release ($ADDRESS_COUNT addresses, $ROAD_COUNT roads, $ENTRANCE_COUNT entrances)."
 
         # Resolve Release Tag and Title dynamically
         RELEASE_TAG="${{ parameters.releaseTag }}"
@@ -103,26 +108,56 @@ jobs:
 
         # Generate Release Notes Markdown
         cat <<EOF > release-notes.md
-        ## OSM Address GeoParquet Release ($RELEASE_TAG)
+        ## OSM GeoParquet Release ($RELEASE_TAG)
 
-        Global ZSTD-compressed GeoParquet datasets containing address-tagged features (\`addr:housenumber\`, \`addr:street\`, \`addr:postcode\`, \`addr:city\`) extracted from OpenStreetMap.
+        Global ZSTD-compressed GeoParquet datasets containing address points, drivable road centerlines, and entrance/access nodes extracted from OpenStreetMap.
 
-        ### Dataset Schema & Attributes
+        ### Datasets & Schemas
+
+        #### 1. Address Points (\`<CC>_<region>.addresses.parquet\`)
         | Column | Type | Description |
         | :--- | :--- | :--- |
         | **\`street\`** | \`VARCHAR\` | Street name (\`addr:street\` or \`addr:place\`) |
         | **\`number\`** | \`VARCHAR\` | House number (\`addr:housenumber\`) |
         | **\`postcode\`** | \`VARCHAR\` | Postal code (\`addr:postcode\`) |
         | **\`city\`** | \`VARCHAR\` | City / Municipality (\`addr:city\`) |
-        | **\`geometry\`** | \`GEOMETRY\` | Point geometry (WGS84 EPSG:4326) |
+        | **\`geometry\`** | \`GEOMETRY\` | Point geometry (WGS84 EPSG:4326, Hilbert-sorted) |
         | **\`osm_type\`** | \`VARCHAR\` | Source OSM element type (\`node\`, \`way\`, \`relation\`) |
         | **\`osm_id\`** | \`BIGINT\` | Source OSM element ID |
 
+        #### 2. Road Centerlines (\`<CC>_<region>.roads.parquet\`)
+        | Column | Type | Description |
+        | :--- | :--- | :--- |
+        | **\`osm_id\`** | \`BIGINT\` | Source OSM Way ID |
+        | **\`osm_type\`** | \`VARCHAR\` | Element type (\`way\`) |
+        | **\`name\`** | \`VARCHAR\` | Street name (\`name\` tag) |
+        | **\`highway\`** | \`VARCHAR\` | Highway classification (\`residential\`, \`primary\`, \`service\`, etc.) |
+        | **\`oneway\`** | \`VARCHAR\` | Normalized oneway flag (\`yes\`, \`no\`, \`-1\`) |
+        | **\`service\`** | \`VARCHAR\` | Subtype for service roads (\`driveway\`, \`alley\`, etc.) |
+        | **\`geometry\`** | \`GEOMETRY\` | LineString geometry (WGS84 EPSG:4326, Hilbert-sorted) |
+
+        #### 3. Entrances & Access Gates (\`<CC>_<region>.entrances.parquet\`)
+        | Column | Type | Description |
+        | :--- | :--- | :--- |
+        | **\`osm_id\`** | \`BIGINT\` | Source OSM Node ID |
+        | **\`osm_type\`** | \`VARCHAR\` | Element type (\`node\`) |
+        | **\`name\`** | \`VARCHAR\` | Entrance name |
+        | **\`ref\`** | \`VARCHAR\` | Staircase / door reference code |
+        | **\`entrance\`** | \`VARCHAR\` | Entrance classification (\`main\`, \`yes\`, \`staircase\`, etc.) |
+        | **\`barrier\`** | \`VARCHAR\` | Barrier tag value for gates/access points (\`gate\`, \`lift_gate\`) |
+        | **\`street\`** | \`VARCHAR\` | Street name at entrance |
+        | **\`housenumber\`** | \`VARCHAR\` | House number at entrance |
+        | **\`geometry\`** | \`GEOMETRY\` | Point geometry (WGS84 EPSG:4326, Hilbert-sorted) |
+
         ### Download Assets
-        - **\`<CC>_<region>.addresses.parquet\`**: Individual per-region GeoParquet files ($PARQUET_COUNT files available worldwide).
+        - **\`<CC>_<region>.addresses.parquet\`**: Address points ($ADDRESS_COUNT files)
+        - **\`<CC>_<region>.roads.parquet\`**: Drivable road centerlines ($ROAD_COUNT files)
+        - **\`<CC>_<region>.entrances.parquet\`**: Entrance nodes & gates ($ENTRANCE_COUNT files)
+
+        Total GeoParquet assets in this release: **$PARQUET_COUNT**.
 
         ---
-        *Built with DuckDB spatial extension and ZSTD compression.*
+        *Built with DuckDB spatial extension and ZSTD compression. Spatially indexed using Hilbert curve ordering.*
         EOF
 
         ls -lh release-assets/
