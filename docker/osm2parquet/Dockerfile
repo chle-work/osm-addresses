@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgdal-dev \
     osmium-tool \
     python3 \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install DuckDB CLI — pinned version for reproducibility
@@ -22,13 +23,26 @@ RUN curl -fsSL \
     && rm /tmp/duckdb.zip \
     && chmod +x /usr/local/bin/duckdb
 
+# Install DuckDB Python API (version-matched to the CLI) + fsspec.
+# The osm-pois chunked-streaming driver (Python) feeds ~100MB line-aligned chunks
+# to read_json() as in-memory seekable BytesIO objects. That requires the duckdb
+# PyPI wheel AND the fsspec module (duckdb's Python API routes file-like inputs
+# through fsspec). Debian bookworm enforces PEP 668, so --break-system-packages
+# is required for a system-wide install.
+ARG DUCKDB_PY_VERSION=1.5.5
+RUN python3 -m pip install --no-cache-dir --break-system-packages \
+        "duckdb==${DUCKDB_PY_VERSION}" \
+        fsspec \
+    && python3 -c "import duckdb; duckdb.sql('INSTALL spatial; LOAD spatial;')"
+
 # Create /app first, then point HOME there so DuckDB installs extensions into
 # /app/.duckdb/ — a path the non-root runtime user can access.
 WORKDIR /app
 ENV HOME=/app
 
 # Pre-install and cache DuckDB spatial extension at build time.
-# This avoids any runtime network access inside Azure DevOps jobs.
+# This avoids any runtime network access inside Azure DevOps jobs. Runs with
+# HOME=/app so BOTH the CLI and the Python API resolve extensions at /app/.duckdb/.
 RUN duckdb -c "INSTALL spatial;"
 
 # Grant 777 permissions to /app so Azure DevOps unprivileged runner user
@@ -40,4 +54,3 @@ LABEL org.opencontainers.image.description="DuckDB spatial converter for OSM Geo
 LABEL org.opencontainers.image.url="https://github.com/krizleebear/osm-addresses/blob/master/docker/osm2parquet/Dockerfile"
 
 CMD ["/bin/bash"]
-
