@@ -216,12 +216,45 @@ fi
 START_TIME=$(date +%s)
 EXPORTED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
+# Reports what a finished export actually cost in scratch space.
+#
+# du(1) on the scratch directory is near-zero by the time an export returns and
+# says nothing about the cost: the GDAL OSM node cache is unlinked while open,
+# so it never appears in a directory listing, and it is released the instant the
+# dataset closes. In the failing US run df(1) was the only reading that moved -
+# the volume drained at roughly 3.9 MB/s while every watched directory stayed
+# flat at 1 MB - so this line would have reported 1 MB for an export consuming
+# gigabytes. The peak is therefore read back from the sampler's time series
+# rather than measured after the fact.
+report_layer_scratch() {
+    local LAYER_NAME="$1"
+    local SINCE_ISO="$2"
+    local VOLUME_USED="$3"
+    local LEFTOVER_MB
+    LEFTOVER_MB=$(du -sm "$WORK_TMP_DIR" 2>/dev/null | cut -f1)
+
+    if [ -z "$RESOURCE_LOG" ] || [ ! -f "$RESOURCE_LOG" ]; then
+        echo "[INFO] Scratch after ${LAYER_NAME}: ${LEFTOVER_MB:-0} MB left on disk, peak unmeasured (sampling off); volume ${SCRATCH_MOUNT} now at ${VOLUME_USED}"
+        return 0
+    fi
+
+    local PEAK_LINE
+    PEAK_LINE=$(bash "$MONITOR" --peak-since "$RESOURCE_LOG" "$SINCE_ISO" 2>/dev/null) || PEAK_LINE="0 0 0"
+
+    local PEAK_UNLINKED_MB MIN_AVAIL_MB PEAK_SAMPLES
+    read -r PEAK_UNLINKED_MB MIN_AVAIL_MB PEAK_SAMPLES <<< "$PEAK_LINE"
+
+    echo "[INFO] Scratch after ${LAYER_NAME}: ${LEFTOVER_MB:-0} MB left on disk, peak ${PEAK_UNLINKED_MB:-0} MB held unlinked over ${PEAK_SAMPLES:-0} samples; volume ${SCRATCH_MOUNT} now at ${VOLUME_USED} (min free ${MIN_AVAIL_MB:-0} MB)"
+}
+
 export_layer() {
     local SQL_TEMPLATE="$1"
     local TARGET_PARQUET="$2"
     local LAYER_NAME="$3"
     local LAYER_START
     LAYER_START=$(date +%s)
+    local LAYER_START_ISO
+    LAYER_START_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
     reset_scratch_dirs
 
@@ -248,12 +281,10 @@ export_layer() {
     local LAYER_ELAPSED=$((LAYER_END - LAYER_START))
     local FILE_SIZE
     FILE_SIZE=$(du -sh "$TARGET_PARQUET" | cut -f1)
-    local SCRATCH_USED_MB
-    SCRATCH_USED_MB=$(du -sm "$WORK_TMP_DIR" 2>/dev/null | cut -f1)
     local VOLUME_USED
     VOLUME_USED=$(df -P "$DUCKDB_TEMP_DIR" 2>/dev/null | awk 'NR == 2 { print $5; exit }')
     echo "[OK] Exported ${LAYER_NAME}: ${TARGET_PARQUET} (${FILE_SIZE}) in ${LAYER_ELAPSED}s"
-    echo "[INFO] Scratch left after ${LAYER_NAME}: ${SCRATCH_USED_MB:-0} MB; volume ${SCRATCH_MOUNT} now at ${VOLUME_USED:-unknown}"
+    report_layer_scratch "$LAYER_NAME" "$LAYER_START_ISO" "${VOLUME_USED:-unknown}"
 }
 
 # 1. Export address points & building polygons
