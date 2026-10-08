@@ -132,9 +132,7 @@ mkdir -p "$DUCKDB_TEMP_DIR" "$GDAL_TEMP_DIR"
 # is the scarce resource on hosted agents.
 export CPL_TMPDIR="$GDAL_TEMP_DIR"
 export OSM_COMPRESS_NODES="${OSM_COMPRESS_NODES:-YES}"
-if [ -n "${OSM_MAX_TMPFILE_SIZE:-}" ]; then
-    export OSM_MAX_TMPFILE_SIZE
-fi
+export OSM_MAX_TMPFILE_SIZE="${OSM_MAX_TMPFILE_SIZE:-4096}"
 
 SCRATCH_AVAIL_MB="$(df -Pm "$DUCKDB_TEMP_DIR" 2>/dev/null | awk 'NR == 2 { print $4 + 0; exit }')"
 [ -z "$SCRATCH_AVAIL_MB" ] && SCRATCH_AVAIL_MB=0

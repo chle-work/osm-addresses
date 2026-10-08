@@ -21,7 +21,7 @@ COPY (
     FROM ST_Read(
         '__INPUT_PBF__',
         layer        = 'lines',
-        open_options = ['CONFIG_FILE=__OSMCONF__']
+        open_options = ['CONFIG_FILE=__OSMCONF__', 'INTERLEAVED_READING=YES']
     )
     WHERE geom IS NOT NULL
       AND ST_IsValid(geom)
