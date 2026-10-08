@@ -140,11 +140,12 @@ Erfasst alle explizit kartierten Eingänge, Türen und Tore.
 
 ## 🏗️ 6. CI/CD & Pipeline-Integration
 
-1. **Single-Pass Osmium-Vorfilterung:**
-   - Auf CI-Runners filtert ein einziger `osmium tags-filter`-Pass alle drei Layer (`addresses`, `roads` mit Whitelist, `entrances`) in ein kompaktes Zwischen-PBF (`$(CC)_$(REGION).combined.pbf`).
-   - Das schwere Roh-PBF von Geofabrik wird sofort gelöscht, um Disk-Space-Limits (< 5 GB Peak) einzuhalten.
+1. **Getrennte Osmium-Vorfilterung (GDAL-Pufferisolation):**
+   - Auf CI-Runners filtert `osmium tags-filter` die drei Layer in drei dedizierte Zwischen-PBFs (`addresses.pbf`, `roads.pbf`, `entrances.pbf`).
+   - Diese Trennung verhindert das GDAL-Überlaufproblem (`Too many features have accumulated in [layer] layer`), bei dem unkonsumierte Layer-Features im GDAL-Puffer bei 100.000 Elementen zum vorzeitigen Abbruch führten.
+   - Das schwere Roh-PBF von Geofabrik wird sofort nach dem Filtern gelöscht, um Disk-Space-Limits (< 5 GB Peak) einzuhalten.
 2. **DuckDB-Konvertierung (`osm2parquet` Container):**
-   - `scripts/convert.sh` führt drei modulare SQL-Skripte aus (`scripts/export_addresses.sql`, `scripts/export_roads.sql`, `scripts/export_entrances.sql`) und erzeugt alle drei Parquet-Dateien.
+   - `scripts/convert.sh` führt drei modulare SQL-Skripte aus (`scripts/export_addresses.sql`, `scripts/export_roads.sql`, `scripts/export_entrances.sql`) auf den jeweils isolierten PBFs aus und erzeugt alle drei Parquet-Dateien.
 3. **Pipeline-Artefakte & GitHub Releases:**
    - Jedes Matrix-Job publiziert ein gebündeltes Artefakt `osm-parquet-$(CC)-$(REGION)` mit allen 3 Parquet-Dateien.
    - Die GitHub Release Pipeline stellt alle 3 Dateien pro Land/Region direkt als Release-Assets bereit (~507 Dateien weltweit).

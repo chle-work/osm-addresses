@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # scripts/convert.sh — OSM PBF to GeoParquet conversion via DuckDB
-# Usage: ./scripts/convert.sh <input.osm.pbf> <output.addresses.parquet> [country_code]
+# Usage: ./scripts/convert.sh <addresses.pbf> <roads.pbf> <entrances.pbf> <output.addresses.parquet> [country_code]
+#    or: ./scripts/convert.sh <input.osm.pbf> <output.addresses.parquet> [country_code]
 #
 # Converts pre-filtered OSM PBF files into ZSTD-compressed GeoParquet files
 # for addresses, roads, and entrances using DuckDB spatial extension.
@@ -30,9 +31,38 @@
 
 set -e
 
-INPUT_PBF="$1"
-OUTPUT_PARQUET="$2"
-COUNTRY_CODE="${3:-${COUNTRY_CODE:-}}"
+if [ "$#" -ge 4 ]; then
+    ADDRESSES_PBF="$1"
+    ROADS_PBF="$2"
+    ENTRANCES_PBF="$3"
+    OUTPUT_PARQUET="$4"
+    COUNTRY_CODE="${5:-${COUNTRY_CODE:-}}"
+elif [ "$#" -ge 2 ]; then
+    INPUT_PBF="$1"
+    OUTPUT_PARQUET="$2"
+    COUNTRY_CODE="${3:-${COUNTRY_CODE:-}}"
+    DIR_NAME="$(dirname "$INPUT_PBF")"
+    BASE_FILE="$(basename "$INPUT_PBF")"
+    PREFIX="${BASE_FILE%.*.pbf}"
+    PREFIX="${PREFIX%.pbf}"
+    if [ -f "${DIR_NAME}/${PREFIX}.addresses.pbf" ] && [ -f "${DIR_NAME}/${PREFIX}.roads.pbf" ]; then
+        ADDRESSES_PBF="${DIR_NAME}/${PREFIX}.addresses.pbf"
+        ROADS_PBF="${DIR_NAME}/${PREFIX}.roads.pbf"
+        ENTRANCES_PBF="${DIR_NAME}/${PREFIX}.entrances.pbf"
+    else
+        ADDRESSES_PBF="$INPUT_PBF"
+        ROADS_PBF="$INPUT_PBF"
+        ENTRANCES_PBF="$INPUT_PBF"
+    fi
+else
+    echo "****************************************************************"
+    echo " ERROR: Missing required arguments."
+    echo ""
+    echo " Usage:  ./scripts/convert.sh <addresses.pbf> <roads.pbf> <entrances.pbf> <output.addresses.parquet> [country_code]"
+    echo "    or:  ./scripts/convert.sh <input.osm.pbf> <output.addresses.parquet> [country_code]"
+    echo "****************************************************************"
+    exit 1
+fi
 
 DIR_NAME="$(dirname "$OUTPUT_PARQUET")"
 FILE_NAME="$(basename "$OUTPUT_PARQUET")"
@@ -52,27 +82,24 @@ fi
 [ -z "$COUNTRY_CODE" ] && COUNTRY_CODE="unknown"
 
 # --- Input validation (fail fast with diagnostic message) ---
-if [ -z "$INPUT_PBF" ] || [ -z "$OUTPUT_PARQUET" ]; then
+if [ -z "$OUTPUT_PARQUET" ]; then
     echo "****************************************************************"
-    echo " ERROR: Missing required arguments."
-    echo ""
-    echo " Usage:  ./scripts/convert.sh <input.osm.pbf> <output.addresses.parquet> [country_code]"
-    echo ""
-    echo " Cause:  One or both CLI arguments were not supplied."
-    echo " Fix:    Ensure the pipeline step passes INPUT_PBF and OUTPUT_PARQUET."
+    echo " ERROR: Missing required output Parquet path."
     echo "****************************************************************"
     exit 1
 fi
 
-if [ ! -f "$INPUT_PBF" ]; then
-    echo "****************************************************************"
-    echo " ERROR: Input PBF file not found: $INPUT_PBF"
-    echo ""
-    echo " Cause:  The input PBF file does not exist at the specified path."
-    echo " Fix:    Verify that the upstream filter/download step succeeded."
-    echo "****************************************************************"
-    exit 1
-fi
+for PBF_PATH in "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF"; do
+    if [ ! -f "$PBF_PATH" ]; then
+        echo "****************************************************************"
+        echo " ERROR: Input PBF file not found: $PBF_PATH"
+        echo ""
+        echo " Cause:  The input PBF file does not exist at the specified path."
+        echo " Fix:    Verify that the upstream filter/download step succeeded."
+        echo "****************************************************************"
+        exit 1
+    fi
+done
 
 # --- Script and Config Resolution ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -178,9 +205,12 @@ if [ -n "$RESOURCE_LOG" ]; then
 fi
 
 # --- Execution ---
-INPUT_MB="$(du -sm "$INPUT_PBF" | cut -f1)"
+INPUT_MB="$(du -sm "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF" 2>/dev/null | awk '{s+=$1} END {print s+0}')"
 
-echo "[INFO] Input PBF     : $INPUT_PBF ($(du -sh "$INPUT_PBF" | cut -f1))"
+echo "[INFO] Addresses PBF : $ADDRESSES_PBF ($(du -sh "$ADDRESSES_PBF" | cut -f1))"
+echo "[INFO] Roads PBF     : $ROADS_PBF ($(du -sh "$ROADS_PBF" | cut -f1))"
+echo "[INFO] Entrances PBF : $ENTRANCES_PBF ($(du -sh "$ENTRANCES_PBF" | cut -f1))"
+echo "[INFO] Total PBF size: ${INPUT_MB} MB"
 echo "[INFO] Addresses Out : $ADDRESSES_PARQUET"
 echo "[INFO] Roads Out     : $ROADS_PARQUET"
 echo "[INFO] Entrances Out : $ENTRANCES_PARQUET"
@@ -197,7 +227,7 @@ if [ "$INPUT_MB" -gt 0 ] && [ "$SCRATCH_AVAIL_MB" -gt 0 ]; then
         echo "****************************************************************"
         echo " ERROR: Insufficient scratch space for conversion."
         echo ""
-        echo " Input PBF    : ${INPUT_MB} MB"
+        echo " Input PBFs   : ${INPUT_MB} MB"
         echo " Scratch free : ${SCRATCH_AVAIL_MB} MB on ${SCRATCH_MOUNT}"
         echo ""
         echo " Cause:  DuckDB spills the ORDER BY sort and GDAL caches OSM nodes"
@@ -218,18 +248,24 @@ EXPORTED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 export_layer() {
     local SQL_TEMPLATE="$1"
-    local TARGET_PARQUET="$2"
-    local LAYER_NAME="$3"
+    local LAYER_PBF="$2"
+    local TARGET_PARQUET="$3"
+    local LAYER_NAME="$4"
     local LAYER_START
     LAYER_START=$(date +%s)
 
     reset_scratch_dirs
 
-    echo "[INFO] Exporting ${LAYER_NAME} -> ${TARGET_PARQUET}..."
+    echo "[INFO] Exporting ${LAYER_NAME} (${LAYER_PBF}) -> ${TARGET_PARQUET}..."
     local TMP_SQL
     TMP_SQL=$(mktemp /tmp/export_XXXXXX.sql)
     build_duckdb_prelude > "$TMP_SQL"
-    sed -e "s|__INPUT_PBF__|${INPUT_PBF}|g" -e "s|__OUTPUT_PARQUET__|${TARGET_PARQUET}|g" -e "s|__COUNTRY_CODE__|${COUNTRY_CODE}|g" -e "s|__EXPORTED_AT__|${EXPORTED_AT}|g" -e "s|__OSMCONF__|${OSMCONF}|g" "$SQL_TEMPLATE" >> "$TMP_SQL"
+    sed -e "s|__INPUT_PBF__|${LAYER_PBF}|g" \
+        -e "s|__OUTPUT_PARQUET__|${TARGET_PARQUET}|g" \
+        -e "s|__COUNTRY_CODE__|${COUNTRY_CODE}|g" \
+        -e "s|__EXPORTED_AT__|${EXPORTED_AT}|g" \
+        -e "s|__OSMCONF__|${OSMCONF}|g" \
+        "$SQL_TEMPLATE" >> "$TMP_SQL"
 
     duckdb < "$TMP_SQL"
     rm -f "$TMP_SQL"
@@ -257,13 +293,13 @@ export_layer() {
 }
 
 # 1. Export address points & building polygons
-export_layer "$SQL_ADDRESSES" "$ADDRESSES_PARQUET" "addresses"
+export_layer "$SQL_ADDRESSES" "$ADDRESSES_PBF" "$ADDRESSES_PARQUET" "addresses"
 
 # 2. Export drivable road centerlines
-export_layer "$SQL_ROADS" "$ROADS_PARQUET" "roads"
+export_layer "$SQL_ROADS" "$ROADS_PBF" "$ROADS_PARQUET" "roads"
 
 # 3. Export entrance nodes & access gates
-export_layer "$SQL_ENTRANCES" "$ENTRANCES_PARQUET" "entrances"
+export_layer "$SQL_ENTRANCES" "$ENTRANCES_PBF" "$ENTRANCES_PARQUET" "entrances"
 
 reset_scratch_dirs
 

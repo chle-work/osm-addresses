@@ -19,7 +19,7 @@ pr: none
 
 parameters:
 - name: skipOsmiumFilter
-  displayName: 'Skip Osmium filtering (use pre-filtered combined.pbf pipeline artifacts)'
+  displayName: 'Skip Osmium filtering (use pre-filtered PBF pipeline artifacts)'
   type: boolean
   default: false
 - name: downloadBuildId
@@ -905,10 +905,10 @@ stages:
           artifactName: 'osm-data-$(OSM_REGION)'
           targetPath: '$(System.DefaultWorkingDirectory)'
 
-    # Download pre-filtered combined PBF artifact when skipOsmiumFilter is true
+    # Download pre-filtered PBF artifacts when skipOsmiumFilter is true
     - task: DownloadPipelineArtifact@2
       enabled: true
-      displayName: 'Download pre-filtered combined PBF artifact'
+      displayName: 'Download pre-filtered PBF artifacts'
       condition: ${{ eq(parameters.skipOsmiumFilter, true) }}
       inputs:
         buildType: 'current'
@@ -933,7 +933,9 @@ stages:
         script: |
           set -e
 
-          FILTERED_PBF="$(COUNTRY_CODE)_$(OSM_REGION).combined.pbf"
+          ADDRESSES_PBF="$(COUNTRY_CODE)_$(OSM_REGION).addresses.pbf"
+          ROADS_PBF="$(COUNTRY_CODE)_$(OSM_REGION).roads.pbf"
+          ENTRANCES_PBF="$(COUNTRY_CODE)_$(OSM_REGION).entrances.pbf"
           OUTPUT_PARQUET="$(COUNTRY_CODE)_$(OSM_REGION).addresses.parquet"
           SKIP_OSMIUM="${{ parameters.skipOsmiumFilter }}"
 
@@ -963,53 +965,65 @@ stages:
             fi
 
             echo "[INFO] Found input PBF: $INPUT_PBF"
-            echo "[INFO] Filtering address, road, and entrance features via osmium..."
+            echo "[INFO] Filtering address features via osmium..."
             osmium tags-filter "$INPUT_PBF" \
               n/addr:housenumber wr/addr:housenumber \
+              -o "$ADDRESSES_PBF" --overwrite
+
+            echo "[INFO] Filtering road features via osmium..."
+            osmium tags-filter "$INPUT_PBF" \
               w/highway=residential,unclassified,tertiary,tertiary_link,secondary,secondary_link,primary,primary_link,trunk,trunk_link,living_street,service,pedestrian,track \
+              -o "$ROADS_PBF" --overwrite
+
+            echo "[INFO] Filtering entrance features via osmium..."
+            osmium tags-filter "$INPUT_PBF" \
               n/entrance n/barrier=gate,lift_gate \
-              -o "$FILTERED_PBF" --overwrite
+              -o "$ENTRANCES_PBF" --overwrite
 
             echo "[INFO] Reclaiming disk space: removing raw input PBF immediately..."
             rm -rf "osm-data-$(OSM_REGION)" "$(OSM_REGION).osm.pbf"
           else
-            echo "[INFO] Skipping Osmium filter stage (using pre-filtered PBF artifact)."
-            if [ ! -f "$FILTERED_PBF" ]; then
-              OLD_PBF="$(COUNTRY_CODE)_$(OSM_REGION).addresses.pbf"
-              if [ -f "$OLD_PBF" ]; then
-                FILTERED_PBF="$OLD_PBF"
-              else
+            echo "[INFO] Skipping Osmium filter stage (using pre-filtered PBF artifacts)."
+            for PBF_NAME in "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF"; do
+              if [ ! -f "$PBF_NAME" ]; then
+                FOUND=$(find . -name "$PBF_NAME" 2>/dev/null | head -n 1)
+                if [ -n "$FOUND" ] && [ -f "$FOUND" ]; then
+                  mv "$FOUND" .
+                fi
+              fi
+              if [ ! -f "$PBF_NAME" ]; then
                 echo "****************************************************************"
-                echo " ERROR: Pre-filtered PBF file '$FILTERED_PBF' not found!"
+                echo " ERROR: Pre-filtered PBF file '$PBF_NAME' not found!"
                 echo "****************************************************************"
                 exit 1
               fi
-            fi
+            done
           fi
 
-          echo "[INFO] Converting filtered PBF to GeoParquet via DuckDB..."
+          echo "[INFO] Converting filtered PBFs to GeoParquet via DuckDB..."
           chmod +x scripts/convert.sh
-          ./scripts/convert.sh "$FILTERED_PBF" "$OUTPUT_PARQUET" "$(COUNTRY_CODE)"
+          ./scripts/convert.sh "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF" "$OUTPUT_PARQUET" "$(COUNTRY_CODE)"
 
           mkdir -p "artifacts-$(COUNTRY_CODE)-$(OSM_REGION)"
           cp "$(COUNTRY_CODE)_$(OSM_REGION)".*.parquet "artifacts-$(COUNTRY_CODE)-$(OSM_REGION)/"
 
-    # The filtered PBF is the expensive intermediate (5 GB for the US, after a
-    # long osmium pass). Publishing it only on success discards it whenever the
-    # DuckDB stage fails, forcing the next attempt to rebuild it from scratch.
-    # Retaining it lets a re-run with skipOsmiumFilter=true jump straight to the
+          mkdir -p "pbf-$(COUNTRY_CODE)-$(OSM_REGION)"
+          cp "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF" "pbf-$(COUNTRY_CODE)-$(OSM_REGION)/" 2>/dev/null || true
+
+    # The filtered PBFs are the expensive intermediate (after long osmium passes).
+    # Retaining them lets a re-run with skipOsmiumFilter=true jump straight to the
     # export stage. Safe to publish unconditionally: this artifact feeds re-runs
     # of this pipeline only, never the release pipeline's aggregation.
     - ${{ if eq(parameters.skipOsmiumFilter, false) }}:
       - task: PublishPipelineArtifact@1
         enabled: true
-        displayName: 'Publish pre-filtered combined PBF artifact'
+        displayName: 'Publish pre-filtered PBF artifacts'
         condition: always()
-        # The PBF is absent when the osmium stage itself failed; a missing path
+        # The PBFs are absent when the osmium stage itself failed; a missing path
         # must not mask the original error.
         continueOnError: true
         inputs:
-          targetPath: '$(COUNTRY_CODE)_$(OSM_REGION).combined.pbf'
+          targetPath: 'pbf-$(COUNTRY_CODE)-$(OSM_REGION)'
           artifact: 'osm-pbf-$(COUNTRY_CODE)-$(OSM_REGION)'
           publishLocation: 'pipeline'
 
