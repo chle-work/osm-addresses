@@ -79,6 +79,13 @@ To ensure consistent pipeline execution, geographical coverage, and clean Git wo
     - **Rationale:** The GDAL OSM driver buffers unconsumed layer features in memory (e.g., tagged road nodes such as crossings or signals during line extraction). If an inactive layer accumulates more than 100,000 features, GDAL triggers `Too many features have accumulated in [layer] layer` and terminates the stream prematurely, leading to massive, silent feature loss. `INTERLEAVED_READING=YES` disables this internal buffering limit and streams features continuously to EOF.
     - **`osmconf.ini` Polygon Way ID Safety:** The `[multipolygons]` section in `osmconf.ini` MUST include `osm_way_id=yes`. For single-polygon closed ways (e.g. building footprints), GDAL outputs the OSM way identifier in `osm_way_id` (leaving `osm_id` null). Omitting `osm_way_id=yes` drops or nullifies way IDs in address exports.
     - **GDAL Node Cache Headroom:** `convert.sh` MUST export `OSM_MAX_TMPFILE_SIZE="${OSM_MAX_TMPFILE_SIZE:-4096}"` and `OSM_COMPRESS_NODES="${OSM_COMPRESS_NODES:-YES}"` to provide adequate in-memory node cache headroom before spilling to `CPL_TMPDIR`.
+13. **Fast-Fail CI Preflight & Regression Testing Invariant:**
+    - Every pipeline run and pull request must execute a fast (<30s) preflight validation stage (`stage: preflight` in `azure-pipelines.yml` and `.github/workflows/ci.yml`) before launching heavy matrix jobs.
+    - The preflight stage validates Azure DevOps YAML syntax (`scripts/validate_azure_yaml.py`) and executes the unit test suite (`PYTHONPATH=scripts python3 -m unittest discover -s scripts -p 'test_*.py'`).
+    - Tests assert that all SQL export templates strictly adhere to Rule 11 (complete `KV_METADATA`), Rule 12 (`INTERLEAVED_READING=YES` and `osm_way_id=yes`), and pipeline Osmium filtering isolation.
+14. **Output Parquet Quality & Completeness Audits (`scripts/validate_parquet.py`):**
+    - Every generated GeoParquet dataset must be verified immediately post-conversion using `scripts/validate_parquet.py <files> --fail-on-error`.
+    - Detects silent regression patterns: 0 building ways on address datasets (`way_count == 0` when total > 500), road ID truncation at low IDs, NULL `osm_id` occurrences, and missing Parquet footer metadata keys.
 
 
 

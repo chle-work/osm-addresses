@@ -5,3 +5,5 @@
 *.zip
 *.csv
 target/
+__pycache__/
+*.py[cod]

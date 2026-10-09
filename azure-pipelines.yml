@@ -128,11 +128,38 @@ stages:
           df -h /
 
 # ---------------------------------------------------------------------------
-# Stage 2: Convert PBF -> GeoParquet (per region, parallel matrix)
+# Stage 2: Fast-fail preflight (YAML syntax & unit tests)
+# ---------------------------------------------------------------------------
+- stage: preflight
+  displayName: 'Preflight & Unit Tests'
+  dependsOn: warmup
+  jobs:
+  - job: test_and_validate
+    displayName: 'Validate YAML & Run Unit Tests'
+    timeoutInMinutes: 5
+    workspace:
+      clean: all
+    container: osm2parquet
+    steps:
+    - checkout: self
+    - bash: |
+        set -euo pipefail
+        echo "=== 1. Validating Azure Pipelines YAML Syntax ==="
+        python3 scripts/validate_azure_yaml.py azure-pipelines.yml
+        python3 scripts/validate_azure_yaml.py azure-pipelines-release.yml
+
+        echo "=== 2. Running Python Unit Test Suite ==="
+        PYTHONPATH=scripts python3 -m unittest discover -s scripts -p 'test_*.py'
+      displayName: 'Fast-fail preflight: YAML validation & Unit Tests'
+
+# ---------------------------------------------------------------------------
+# Stage 3: Convert PBF -> GeoParquet (per region, parallel matrix)
 # ---------------------------------------------------------------------------
 - stage: convert
   displayName: 'Convert OSM PBF to GeoParquet'
-  dependsOn: warmup
+  dependsOn:
+  - warmup
+  - preflight
   condition: succeeded()
 
   jobs:
@@ -1003,6 +1030,9 @@ stages:
           echo "[INFO] Converting filtered PBFs to GeoParquet via DuckDB..."
           chmod +x scripts/convert.sh
           ./scripts/convert.sh "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF" "$OUTPUT_PARQUET" "$(COUNTRY_CODE)"
+
+          echo "[INFO] Validating output GeoParquet files..."
+          python3 scripts/validate_parquet.py "$(COUNTRY_CODE)_$(OSM_REGION)".*.parquet --fail-on-error
 
           mkdir -p "artifacts-$(COUNTRY_CODE)-$(OSM_REGION)"
           cp "$(COUNTRY_CODE)_$(OSM_REGION)".*.parquet "artifacts-$(COUNTRY_CODE)-$(OSM_REGION)/"
