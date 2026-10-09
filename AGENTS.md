@@ -45,8 +45,9 @@ To ensure consistent pipeline execution, geographical coverage, and clean Git wo
 4. **Azure DevOps Parameter Condition Syntax**:
    - In Azure DevOps task/job `condition:` expressions, template parameters MUST be wrapped in `${{ eq(parameters.name, value) }}`. Raw `parameters.name` references outside `${{ }}` trigger `Unrecognized value: 'parameters'` errors.
    - In Bash scripts, handle both `"false"` and `"False"` because template expansion converts boolean false to `"False"`.
-5. **Osmium Tag Pre-filtering for Runner Disk Conservation**:
-   - When processing large country extracts (e.g. Germany 4.4 GB), pre-filter features using `osmium tags-filter` first, delete the raw input PBF immediately (`rm -rf osm-data-$(REGION)`), and run downstream spatial tools (DuckDB, GDAL) on the small filtered PBF to keep peak disk usage under 5 GB.
+5. **Osmium Dedicated Per-Layer Tag Pre-filtering & Runner Disk Conservation**:
+   - When processing large country extracts (e.g. Germany 4.4 GB), pre-filter features into **separate, dedicated PBF files** per layer (`addresses.pbf`, `roads.pbf`, `entrances.pbf`) rather than a single combined file.
+   - Delete the raw input PBF immediately after filtering (`rm -rf osm-data-$(REGION) $(REGION).osm.pbf`) to keep peak runner disk usage under 5 GB.
 6. **Conventional Commits:**
    - Use conventional commit prefixes (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`).
 7. **English Output Standard:**
@@ -58,11 +59,11 @@ To ensure consistent pipeline execution, geographical coverage, and clean Git wo
 10. **Explanation Preceding Git Actions Invariant (Explain First, Commit Second):**
     - The agent must always first output a clear, comprehensive explanation of the diagnosis, the rationale, and the exact changes in the visible response text before requesting permission or attempting to execute `git commit`, `git push`, or pipeline triggers. Never trigger permission prompts for Git actions without the user having seen the complete explanatory context first.
 11. **Parquet Provenance & License Metadata Invariant:**
-    - All GeoParquet files produced by `osm2parquet` (`export_addresses.sql`) MUST embed standard provenance, copyright, and licensing metadata in the Parquet file footer via DuckDB's `KV_METADATA` option.
+    - All GeoParquet files produced by `osm2parquet` (`export_addresses.sql`, `export_roads.sql`, `export_entrances.sql`) MUST embed standard provenance, copyright, and licensing metadata in the Parquet file footer via DuckDB's `KV_METADATA` option.
     - Required metadata keys:
       - `source`: `OpenStreetMap`
       - `origin`: `OpenStreetMap (https://www.openstreetmap.org)`
-      - `dataset`: `OpenStreetMap Addresses`
+      - `dataset`: `OpenStreetMap Addresses` (or `OpenStreetMap Roads`, `OpenStreetMap Entrances`)
       - `attribution`: `© OpenStreetMap contributors`
       - `attribution_url`: `https://www.openstreetmap.org/copyright`
       - `license`: `ODbL-1.0 (https://opendatacommons.org/licenses/odbl/)`
@@ -73,6 +74,11 @@ To ensure consistent pipeline execution, geographical coverage, and clean Git wo
       - `compiler`: `osm-addresses (https://github.com/krizleebear/osm-addresses)`
       - `country_code`: 2-letter ISO code or territory identifier (e.g. `DE`, `US`)
       - `exported_at`: ISO-8601 UTC timestamp (e.g. `YYYY-MM-DDTHH:MM:SSZ`)
+12. **GDAL OSM Interleaved Reading & Buffer Isolation Invariant (`INTERLEAVED_READING=YES`):**
+    - All DuckDB `ST_Read` calls against OSM PBF files (`export_roads.sql`, `export_addresses.sql`, `export_entrances.sql`) MUST specify `open_options = ['CONFIG_FILE=__OSMCONF__', 'INTERLEAVED_READING=YES']`.
+    - **Rationale:** The GDAL OSM driver buffers unconsumed layer features in memory (e.g., tagged road nodes such as crossings or signals during line extraction). If an inactive layer accumulates more than 100,000 features, GDAL triggers `Too many features have accumulated in [layer] layer` and terminates the stream prematurely, leading to massive, silent feature loss. `INTERLEAVED_READING=YES` disables this internal buffering limit and streams features continuously to EOF.
+    - **`osmconf.ini` Polygon Way ID Safety:** The `[multipolygons]` section in `osmconf.ini` MUST include `osm_way_id=yes`. For single-polygon closed ways (e.g. building footprints), GDAL outputs the OSM way identifier in `osm_way_id` (leaving `osm_id` null). Omitting `osm_way_id=yes` drops or nullifies way IDs in address exports.
+    - **GDAL Node Cache Headroom:** `convert.sh` MUST export `OSM_MAX_TMPFILE_SIZE="${OSM_MAX_TMPFILE_SIZE:-4096}"` and `OSM_COMPRESS_NODES="${OSM_COMPRESS_NODES:-YES}"` to provide adequate in-memory node cache headroom before spilling to `CPL_TMPDIR`.
 
 
 
