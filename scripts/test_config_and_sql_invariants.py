@@ -60,9 +60,9 @@ def read_file(path):
 
 
 class TestContainerVersionConfiguration(unittest.TestCase):
-    """Build and release jobs must use the same centrally pinned container version."""
+    """Only the build job needs the centrally pinned DuckDB container."""
 
-    def test_pipelines_import_the_shared_container_version_template(self):
+    def test_build_imports_the_shared_container_version_template(self):
         expected_template = "- template: templates/osm2parquet-version.yml"
         expected_image = "image: ghcr.io/krizleebear/osm2parquet:$(OSM2PARQUET_VERSION)"
 
@@ -75,10 +75,13 @@ class TestContainerVersionConfiguration(unittest.TestCase):
             read_file(OSM2PARQUET_VERSION_TEMPLATE),
             "shared template must pin OSM2PARQUET_VERSION",
         )
-        for pipeline in (PIPELINE_YAML, RELEASE_PIPELINE_YAML):
-            content = read_file(pipeline)
-            self.assertIn(expected_template, content)
-            self.assertIn(expected_image, content)
+        pipeline_content = read_file(PIPELINE_YAML)
+        self.assertIn(expected_template, pipeline_content)
+        self.assertIn(expected_image, pipeline_content)
+
+    def test_release_pipeline_does_not_require_the_osm2parquet_container(self):
+        release_content = read_file(RELEASE_PIPELINE_YAML)
+        self.assertNotIn("osm2parquet", release_content)
 
     def test_build_warmup_uses_the_shared_container_version(self):
         pipeline_content = read_file(PIPELINE_YAML)
@@ -225,6 +228,40 @@ class TestPipelineLayerFiltering(unittest.TestCase):
             './scripts/convert.sh "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF"',
             self.pipeline_content,
             "convert.sh must be invoked with 3 dedicated layer PBF arguments",
+        )
+
+    def test_oversized_parquets_are_partitioned_before_artifact_publication(self):
+        splitter_command = "python3 scripts/split_oversized_parquet.py . --max-size-mb 1800"
+        validation_command = 'python3 scripts/validate_parquet.py "$(COUNTRY_CODE)_$(OSM_REGION)".*.parquet --fail-on-error'
+        artifact_copy = 'cp "$(COUNTRY_CODE)_$(OSM_REGION)".*.parquet "artifacts-$(COUNTRY_CODE)-$(OSM_REGION)/"'
+
+        self.assertIn(splitter_command, self.pipeline_content)
+        self.assertEqual(
+            self.pipeline_content.count(validation_command),
+            2,
+            "build must validate both original exports and publishable files after partitioning",
+        )
+        first_validation = self.pipeline_content.index(validation_command)
+        second_validation = self.pipeline_content.index(validation_command, first_validation + 1)
+        self.assertLess(
+            first_validation,
+            self.pipeline_content.index(splitter_command),
+            "build must validate original exports before partitioning them",
+        )
+        self.assertLess(
+            self.pipeline_content.index(splitter_command),
+            second_validation,
+            "build must validate the partitioned outputs after partitioning",
+        )
+        self.assertLess(
+            second_validation,
+            self.pipeline_content.index(artifact_copy),
+            "build must validate publishable outputs before artifact copying",
+        )
+        self.assertNotIn(
+            "split_oversized_parquet.py",
+            read_file(RELEASE_PIPELINE_YAML),
+            "release aggregation must not partition all country assets on one disk",
         )
 
 

@@ -27,22 +27,13 @@ parameters:
   type: boolean
   default: true
 
-variables:
-- template: templates/osm2parquet-version.yml
-
 pool:
   vmImage: 'ubuntu-latest'
-
-resources:
-  containers:
-  - container: osm2parquet
-    image: ghcr.io/krizleebear/osm2parquet:$(OSM2PARQUET_VERSION)
 
 jobs:
 - job: release
   displayName: 'Publish GitHub Release'
   timeoutInMinutes: 360
-  container: osm2parquet
   steps:
   - checkout: self
 
@@ -87,13 +78,11 @@ jobs:
         set -e
         mkdir -p release-assets
 
-        # Move all per-region GeoParquet files and clean up temporary download directory
+        # Move already publishable per-region GeoParquet files and clean up the
+        # temporary download directory. Oversized files are partitioned in their
+        # individual build jobs before they are published as artifacts.
         find downloads -name "*.parquet" -exec mv {} release-assets/ \;
         rm -rf downloads
-
-        # The osm2parquet job container provides the pinned DuckDB CLI.
-        # Partition files above 1800 MB to comply with GitHub Release's 2.0 GiB limit.
-        python3 scripts/split_oversized_parquet.py release-assets/ --max-size-mb 1800
 
         PARQUET_COUNT=$(find release-assets -name "*.parquet" | wc -l)
         ADDRESS_COUNT=$(find release-assets -name "*.addresses*.parquet" | wc -l)

@@ -1036,6 +1036,13 @@ stages:
           echo "[INFO] Validating output GeoParquet files..."
           python3 scripts/validate_parquet.py "$(COUNTRY_CODE)_$(OSM_REGION)".*.parquet --fail-on-error
 
+          # Partition oversized files while this country is the only dataset on disk.
+          # The release pipeline aggregates only already publishable assets.
+          python3 scripts/split_oversized_parquet.py . --max-size-mb 1800
+
+          echo "[INFO] Validating publishable GeoParquet files after partitioning..."
+          python3 scripts/validate_parquet.py "$(COUNTRY_CODE)_$(OSM_REGION)".*.parquet --fail-on-error
+
           mkdir -p "artifacts-$(COUNTRY_CODE)-$(OSM_REGION)"
           cp "$(COUNTRY_CODE)_$(OSM_REGION)".*.parquet "artifacts-$(COUNTRY_CODE)-$(OSM_REGION)/"
 

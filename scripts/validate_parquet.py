@@ -265,11 +265,11 @@ def main():
     results = []
     for fp in sorted(set(files_to_check)):
         basename = os.path.basename(fp)
-        if "addresses.parquet" in basename:
+        if ".addresses" in basename:
             results.append(validate_addresses_file(fp))
-        elif "roads.parquet" in basename:
+        elif ".roads" in basename:
             results.append(validate_roads_file(fp))
-        elif "entrances.parquet" in basename:
+        elif ".entrances" in basename:
             results.append(validate_entrances_file(fp))
         else:
             # Generic parquet check
