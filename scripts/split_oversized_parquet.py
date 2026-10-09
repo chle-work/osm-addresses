@@ -9,13 +9,13 @@ parts (.part1.parquet, .part2.parquet, ...) using DuckDB.
 Preserves ZSTD compression and KV_METADATA footer tags.
 """
 
-import os
-import sys
-import glob
-import math
-import json
 import argparse
+import glob
+import json
+import math
+import os
 import subprocess
+import sys
 
 MAX_SIZE_MB_DEFAULT = 1800
 
@@ -24,19 +24,19 @@ def get_kv_metadata(file_path):
     """Extract KV_METADATA from parquet file using duckdb."""
     try:
         out = subprocess.check_output([
-            'duckdb', '-dark-mode', '-json', '-c',
-            f'SELECT key, value FROM parquet_kv_metadata("{file_path}")'
-        ], stderr=subprocess.DEVNULL).decode('utf-8')
+            "duckdb", "-json", "-c",
+            f'SELECT key, value FROM parquet_kv_metadata("{file_path}")',
+        ], stderr=subprocess.DEVNULL).decode("utf-8")
         rows = json.loads(out) if out.strip() else []
         kv = {}
-        for r in rows:
-            k = r.get('key')
-            v = r.get('value')
-            if k is not None and v is not None:
-                kv[k] = v
+        for row in rows:
+            key = row.get("key")
+            value = row.get("value")
+            if key is not None and value is not None:
+                kv[key] = value
         return kv
-    except Exception as e:
-        print(f"[WARN] Could not extract KV_METADATA from {file_path}: {e}", file=sys.stderr)
+    except Exception as error:
+        print(f"[WARN] Could not extract KV_METADATA from {file_path}: {error}", file=sys.stderr)
         return {}
 
 
@@ -53,11 +53,11 @@ def split_file(file_path, max_size_mb):
 
     dir_name = os.path.dirname(file_path)
     base_name = os.path.basename(file_path)
-    stem = base_name[:-len('.parquet')]
+    stem = base_name[:-len(".parquet")]
 
     kv_dict = get_kv_metadata(file_path)
-    kv_items = [f"{repr(str(k))}: {repr(str(v))}" for k, v in kv_dict.items()]
-    kv_clause = (', KV_METADATA {' + ', '.join(kv_items) + '}') if kv_items else ''
+    kv_items = [f"{repr(str(key))}: {repr(str(value))}" for key, value in kv_dict.items()]
+    kv_clause = (", KV_METADATA {" + ", ".join(kv_items) + "}") if kv_items else ""
 
     created_parts = []
     for part in range(1, num_parts + 1):
@@ -69,7 +69,7 @@ def split_file(file_path, max_size_mb):
         ) TO '{part_file}' (FORMAT PARQUET, COMPRESSION 'ZSTD'{kv_clause});"""
 
         print(f"[INFO] Generating {part_file} (part {part}/{num_parts})...")
-        subprocess.check_call(['duckdb', '-dark-mode', '-c', sql])
+        subprocess.check_call(["duckdb", "-c", sql])
         part_size_mb = os.path.getsize(part_file) / (1024 * 1024)
         print(f"[OK] Created {part_file} ({part_size_mb:.1f} MB)")
         created_parts.append(part_file)
@@ -82,17 +82,21 @@ def split_file(file_path, max_size_mb):
 def main():
     parser = argparse.ArgumentParser(description="Split Parquet files > 2 GiB for GitHub Release")
     parser.add_argument("directory", help="Directory containing .parquet files")
-    parser.add_argument("--max-size-mb", type=float, default=MAX_SIZE_MB_DEFAULT,
-                        help=f"Maximum allowed size in MB (default: {MAX_SIZE_MB_DEFAULT})")
+    parser.add_argument(
+        "--max-size-mb",
+        type=float,
+        default=MAX_SIZE_MB_DEFAULT,
+        help=f"Maximum allowed size in MB (default: {MAX_SIZE_MB_DEFAULT})",
+    )
     args = parser.parse_args()
 
     # Find all top-level parquet files (avoid processing already split parts)
     parquet_files = sorted(glob.glob(os.path.join(args.directory, "*.parquet")))
     split_count = 0
-    for p_file in parquet_files:
-        if ".part" in os.path.basename(p_file):
+    for parquet_file in parquet_files:
+        if ".part" in os.path.basename(parquet_file):
             continue
-        parts = split_file(p_file, args.max_size_mb)
+        parts = split_file(parquet_file, args.max_size_mb)
         if parts:
             split_count += 1
 
@@ -102,5 +106,5 @@ def main():
         print(f"[INFO] Successfully partitioned {split_count} oversized Parquet file(s).")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

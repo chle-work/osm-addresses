@@ -1,0 +1,3 @@
+# Shared osm2parquet runtime version for Azure DevOps pipelines.
+variables:
+  OSM2PARQUET_VERSION: 'v1.1.0'

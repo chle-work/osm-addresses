@@ -30,6 +30,12 @@ SQL_TEMPLATES = (
 OSMCONF_INI = os.path.join(REPO_ROOT, "scripts", "osmconf.ini")
 CONVERT_SH = os.path.join(REPO_ROOT, "scripts", "convert.sh")
 PIPELINE_YAML = os.path.join(REPO_ROOT, "azure-pipelines.yml")
+RELEASE_PIPELINE_YAML = os.path.join(REPO_ROOT, "azure-pipelines-release.yml")
+OSM2PARQUET_VERSION_TEMPLATE = os.path.join(
+    REPO_ROOT,
+    "templates",
+    "osm2parquet-version.yml",
+)
 
 REQUIRED_METADATA_KEYS = (
     "source",
@@ -51,6 +57,39 @@ REQUIRED_METADATA_KEYS = (
 def read_file(path):
     with open(path, "r", encoding="utf-8") as handle:
         return handle.read()
+
+
+class TestContainerVersionConfiguration(unittest.TestCase):
+    """Build and release jobs must use the same centrally pinned container version."""
+
+    def test_pipelines_import_the_shared_container_version_template(self):
+        expected_template = "- template: templates/osm2parquet-version.yml"
+        expected_image = "image: ghcr.io/krizleebear/osm2parquet:$(OSM2PARQUET_VERSION)"
+
+        self.assertTrue(
+            os.path.isfile(OSM2PARQUET_VERSION_TEMPLATE),
+            "shared osm2parquet version template must exist",
+        )
+        self.assertIn(
+            "OSM2PARQUET_VERSION: 'v",
+            read_file(OSM2PARQUET_VERSION_TEMPLATE),
+            "shared template must pin OSM2PARQUET_VERSION",
+        )
+        for pipeline in (PIPELINE_YAML, RELEASE_PIPELINE_YAML):
+            content = read_file(pipeline)
+            self.assertIn(expected_template, content)
+            self.assertIn(expected_image, content)
+
+    def test_build_warmup_uses_the_shared_container_version(self):
+        pipeline_content = read_file(PIPELINE_YAML)
+        self.assertIn(
+            'GHCR_IMAGE="ghcr.io/krizleebear/osm2parquet:$(OSM2PARQUET_VERSION)"',
+            pipeline_content,
+        )
+        self.assertIn(
+            'MIRROR_IMAGE="mirror.gcr.io/krizleebear/osm2parquet:$(OSM2PARQUET_VERSION)"',
+            pipeline_content,
+        )
 
 
 class TestSqlTemplatesMetadata(unittest.TestCase):

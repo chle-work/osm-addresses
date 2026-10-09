@@ -32,6 +32,9 @@ parameters:
   type: boolean
   default: false
 
+variables:
+- template: templates/osm2parquet-version.yml
+
 pool:
   vmImage: 'ubuntu-latest'
 
@@ -40,8 +43,7 @@ resources:
   # Primary registry: GHCR (no rate limits, no mirror.gcr.io flakiness).
   # Fallback: mirror.gcr.io is attempted in the warmup job for cache pre-warming.
   - container: osm2parquet
-    # krizleebear/osm2parquet:v1.1.0 (standard Docker Schema 2 format)
-    image: ghcr.io/krizleebear/osm2parquet:v1.1.0
+    image: ghcr.io/krizleebear/osm2parquet:$(OSM2PARQUET_VERSION)
 
 stages:
 # ---------------------------------------------------------------------------
@@ -66,8 +68,8 @@ stages:
         targetType: 'inline'
         script: |
           set -e
-          GHCR_IMAGE="ghcr.io/krizleebear/osm2parquet:v1.1.0"
-          MIRROR_IMAGE="mirror.gcr.io/krizleebear/osm2parquet:v1.1.0"
+          GHCR_IMAGE="ghcr.io/krizleebear/osm2parquet:$(OSM2PARQUET_VERSION)"
+          MIRROR_IMAGE="mirror.gcr.io/krizleebear/osm2parquet:$(OSM2PARQUET_VERSION)"
 
           pull_with_retry() {
             local IMAGE="$1"

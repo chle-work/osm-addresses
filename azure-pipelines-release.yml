@@ -27,17 +27,27 @@ parameters:
   type: boolean
   default: true
 
+variables:
+- template: templates/osm2parquet-version.yml
+
 pool:
   vmImage: 'ubuntu-latest'
+
+resources:
+  containers:
+  - container: osm2parquet
+    image: ghcr.io/krizleebear/osm2parquet:$(OSM2PARQUET_VERSION)
 
 jobs:
 - job: release
   displayName: 'Publish GitHub Release'
   timeoutInMinutes: 360
+  container: osm2parquet
   steps:
   - checkout: self
 
   - task: Bash@3
+    target: host
     displayName: 'Reclaim runner host disk space'
     inputs:
       targetType: 'inline'
@@ -81,26 +91,8 @@ jobs:
         find downloads -name "*.parquet" -exec mv {} release-assets/ \;
         rm -rf downloads
 
-        # Install DuckDB CLI if not present (for splitting files > 2 GiB)
-        if ! command -v duckdb &> /dev/null; then
-          echo "[INFO] Installing DuckDB CLI for Parquet partitioning..."
-          DUCKDB_VERSION="v1.1.3"
-          ARCH=$(uname -m)
-          if [ "$ARCH" = "x86_64" ]; then
-            DUCKDB_ARCH="amd64"
-          elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-            DUCKDB_ARCH="arm64"
-          else
-            DUCKDB_ARCH="amd64"
-          fi
-          curl -fsSL "https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/duckdb_cli-linux-${DUCKDB_ARCH}.zip" -o /tmp/duckdb.zip
-          sudo unzip -q -o /tmp/duckdb.zip -d /usr/local/bin
-          sudo chmod +x /usr/local/bin/duckdb
-          rm -f /tmp/duckdb.zip
-          echo "[OK] DuckDB CLI installed: $(duckdb --version)"
-        fi
-
-        # Partition any GeoParquet file larger than 1800 MB to comply with GitHub Release 2.0 GiB limit
+        # The osm2parquet job container provides the pinned DuckDB CLI.
+        # Partition files above 1800 MB to comply with GitHub Release's 2.0 GiB limit.
         python3 scripts/split_oversized_parquet.py release-assets/ --max-size-mb 1800
 
         PARQUET_COUNT=$(find release-assets -name "*.parquet" | wc -l)
