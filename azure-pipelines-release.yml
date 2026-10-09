@@ -66,12 +66,7 @@ jobs:
         pipelineId: '${{ parameters.specificBuildId }}'
       ${{ if or(eq(parameters.specificBuildId, 'latest'), eq(parameters.specificBuildId, 'auto'), eq(parameters.specificBuildId, '')) }}:
         buildVersionToDownload: 'latest'
-      itemPattern: |
-        osm-parquet-[A-Z]*/**
-        addresses-parquet-[A-Z]*/**
-        !osm-pbf-*/**
-        !resource-log-*/**
-        !*-archives/**
+      itemPattern: '**/*.parquet'
       targetPath: '$(System.DefaultWorkingDirectory)/downloads'
 
   - task: Bash@3
