@@ -74,6 +74,7 @@ To ensure consistent pipeline execution, geographical coverage, and clean Git wo
       - `compiler`: `osm-addresses (https://github.com/krizleebear/osm-addresses)`
       - `country_code`: 2-letter ISO code or territory identifier (e.g. `DE`, `US`)
       - `exported_at`: ISO-8601 UTC timestamp (e.g. `YYYY-MM-DDTHH:MM:SSZ`)
+      - `osm_data_timestamp`: ISO-8601 UTC timestamp of OSM PBF replication/data cutoff (e.g. `YYYY-MM-DDTHH:MM:SSZ`)
 12. **GDAL OSM Interleaved Reading & Buffer Isolation Invariant (`INTERLEAVED_READING=YES`):**
     - All DuckDB `ST_Read` calls against OSM PBF files (`export_roads.sql`, `export_addresses.sql`, `export_entrances.sql`) MUST specify `open_options = ['CONFIG_FILE=__OSMCONF__', 'INTERLEAVED_READING=YES']`.
     - **Rationale:** The GDAL OSM driver buffers unconsumed layer features in memory (e.g., tagged road nodes such as crossings or signals during line extraction). If an inactive layer accumulates more than 100,000 features, GDAL triggers `Too many features have accumulated in [layer] layer` and terminates the stream prematurely, leading to massive, silent feature loss. `INTERLEAVED_READING=YES` disables this internal buffering limit and streams features continuously to EOF.

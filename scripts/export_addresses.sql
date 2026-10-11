@@ -77,6 +77,7 @@ COPY (
         'schema_url': 'https://github.com/krizleebear/osm-addresses',
         'compiler': 'osm-addresses (https://github.com/krizleebear/osm-addresses)',
         'country_code': '__COUNTRY_CODE__',
-        'exported_at': '__EXPORTED_AT__'
+        'exported_at': '__EXPORTED_AT__',
+        'osm_data_timestamp': '__OSM_DATA_TIMESTAMP__'
     }
 );

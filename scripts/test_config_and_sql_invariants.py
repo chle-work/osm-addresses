@@ -51,6 +51,7 @@ REQUIRED_METADATA_KEYS = (
     "compiler",
     "country_code",
     "exported_at",
+    "osm_data_timestamp",
 )
 
 
@@ -113,6 +114,14 @@ class TestSqlTemplatesMetadata(unittest.TestCase):
                     content,
                     f"{rel_path} is missing mandatory KV_METADATA key '{key}'",
                 )
+
+    def test_convert_sh_substitutes_osm_data_timestamp(self):
+        content = read_file(CONVERT_SH)
+        self.assertIn(
+            "__OSM_DATA_TIMESTAMP__",
+            content,
+            "convert.sh must substitute __OSM_DATA_TIMESTAMP__ placeholder",
+        )
 
 
 class TestGdalInterleavedReading(unittest.TestCase):

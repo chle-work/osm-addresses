@@ -244,6 +244,23 @@ fi
 START_TIME=$(date +%s)
 EXPORTED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
+get_pbf_timestamp() {
+    local pbf="$1"
+    local ts=""
+    if command -v osmium >/dev/null 2>&1; then
+        ts=$(osmium fileinfo -e -g header.option.osmosis_replication_timestamp "$pbf" 2>/dev/null || true)
+        if [ -z "$ts" ]; then
+            ts=$(osmium fileinfo -j "$pbf" 2>/dev/null | python3 -c "import sys, json; print(json.load(sys.stdin).get('header', {}).get('options', {}).get('osmosis_replication_timestamp', ''))" 2>/dev/null || true)
+        fi
+    fi
+    if [ -z "$ts" ] && [ -f "$pbf" ]; then
+        ts=$(python3 -c "import os, sys, datetime; print(datetime.datetime.fromtimestamp(os.path.getmtime(sys.argv[1]), tz=datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))" "$pbf" 2>/dev/null || true)
+    fi
+    echo "${ts:-$EXPORTED_AT}"
+}
+
+OSM_DATA_TIMESTAMP="${OSM_DATA_TIMESTAMP:-$(get_pbf_timestamp "$ADDRESSES_PBF")}"
+
 export_layer() {
     local SQL_TEMPLATE="$1"
     local LAYER_PBF="$2"
@@ -262,6 +279,7 @@ export_layer() {
         -e "s|__OUTPUT_PARQUET__|${TARGET_PARQUET}|g" \
         -e "s|__COUNTRY_CODE__|${COUNTRY_CODE}|g" \
         -e "s|__EXPORTED_AT__|${EXPORTED_AT}|g" \
+        -e "s|__OSM_DATA_TIMESTAMP__|${OSM_DATA_TIMESTAMP}|g" \
         -e "s|__OSMCONF__|${OSMCONF}|g" \
         "$SQL_TEMPLATE" >> "$TMP_SQL"
 

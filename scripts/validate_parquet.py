@@ -40,6 +40,7 @@ REQUIRED_METADATA_KEYS = [
     "compiler",
     "country_code",
     "exported_at",
+    "osm_data_timestamp",
 ]
 
 ADDRESS_REQUIRED_COLUMNS = ["osm_id", "osm_type", "number", "street", "geometry"]
