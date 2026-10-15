@@ -31,12 +31,28 @@
 
 set -e
 
-if [ "$#" -ge 4 ]; then
+if [ "$#" -ge 5 ] && [[ "$4" == *.pbf ]]; then
+    ADDRESSES_PBF="$1"
+    ROADS_PBF="$2"
+    ENTRANCES_PBF="$3"
+    WATERWAYS_PBF="$4"
+    OUTPUT_PARQUET="$5"
+    COUNTRY_CODE="${6:-${COUNTRY_CODE:-}}"
+elif [ "$#" -ge 4 ]; then
     ADDRESSES_PBF="$1"
     ROADS_PBF="$2"
     ENTRANCES_PBF="$3"
     OUTPUT_PARQUET="$4"
     COUNTRY_CODE="${5:-${COUNTRY_CODE:-}}"
+    DIR_NAME="$(dirname "$ADDRESSES_PBF")"
+    BASE_FILE="$(basename "$ADDRESSES_PBF")"
+    PREFIX="${BASE_FILE%.addresses.pbf}"
+    PREFIX="${PREFIX%.pbf}"
+    if [ -f "${DIR_NAME}/${PREFIX}.waterways.pbf" ]; then
+        WATERWAYS_PBF="${DIR_NAME}/${PREFIX}.waterways.pbf"
+    else
+        WATERWAYS_PBF=""
+    fi
 elif [ "$#" -ge 2 ]; then
     INPUT_PBF="$1"
     OUTPUT_PARQUET="$2"
@@ -49,16 +65,23 @@ elif [ "$#" -ge 2 ]; then
         ADDRESSES_PBF="${DIR_NAME}/${PREFIX}.addresses.pbf"
         ROADS_PBF="${DIR_NAME}/${PREFIX}.roads.pbf"
         ENTRANCES_PBF="${DIR_NAME}/${PREFIX}.entrances.pbf"
+        if [ -f "${DIR_NAME}/${PREFIX}.waterways.pbf" ]; then
+            WATERWAYS_PBF="${DIR_NAME}/${PREFIX}.waterways.pbf"
+        else
+            WATERWAYS_PBF=""
+        fi
     else
         ADDRESSES_PBF="$INPUT_PBF"
         ROADS_PBF="$INPUT_PBF"
         ENTRANCES_PBF="$INPUT_PBF"
+        WATERWAYS_PBF="$INPUT_PBF"
     fi
 else
     echo "****************************************************************"
     echo " ERROR: Missing required arguments."
     echo ""
-    echo " Usage:  ./scripts/convert.sh <addresses.pbf> <roads.pbf> <entrances.pbf> <output.addresses.parquet> [country_code]"
+    echo " Usage:  ./scripts/convert.sh <addresses.pbf> <roads.pbf> <entrances.pbf> <waterways.pbf> <output.addresses.parquet> [country_code]"
+    echo "    or:  ./scripts/convert.sh <addresses.pbf> <roads.pbf> <entrances.pbf> <output.addresses.parquet> [country_code]"
     echo "    or:  ./scripts/convert.sh <input.osm.pbf> <output.addresses.parquet> [country_code]"
     echo "****************************************************************"
     exit 1
@@ -69,11 +92,13 @@ FILE_NAME="$(basename "$OUTPUT_PARQUET")"
 BASE_NAME="${FILE_NAME%.addresses.parquet}"
 BASE_NAME="${BASE_NAME%.roads.parquet}"
 BASE_NAME="${BASE_NAME%.entrances.parquet}"
+BASE_NAME="${BASE_NAME%.waterways.parquet}"
 BASE_NAME="${BASE_NAME%.parquet}"
 
 ADDRESSES_PARQUET="${DIR_NAME}/${BASE_NAME}.addresses.parquet"
 ROADS_PARQUET="${DIR_NAME}/${BASE_NAME}.roads.parquet"
 ENTRANCES_PARQUET="${DIR_NAME}/${BASE_NAME}.entrances.parquet"
+WATERWAYS_PARQUET="${DIR_NAME}/${BASE_NAME}.waterways.parquet"
 
 # If COUNTRY_CODE is still empty, derive it from output filename (e.g. DE_germany.addresses.parquet -> DE)
 if [ -z "$COUNTRY_CODE" ]; then
@@ -89,7 +114,7 @@ if [ -z "$OUTPUT_PARQUET" ]; then
     exit 1
 fi
 
-for PBF_PATH in "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF"; do
+for PBF_PATH in "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF" ${WATERWAYS_PBF:+"$WATERWAYS_PBF"}; do
     if [ ! -f "$PBF_PATH" ]; then
         echo "****************************************************************"
         echo " ERROR: Input PBF file not found: $PBF_PATH"
@@ -106,10 +131,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SQL_ADDRESSES="${SCRIPT_DIR}/export_addresses.sql"
 SQL_ROADS="${SCRIPT_DIR}/export_roads.sql"
 SQL_ENTRANCES="${SCRIPT_DIR}/export_entrances.sql"
+SQL_WATERWAYS="${SCRIPT_DIR}/export_waterways.sql"
 OSMCONF="${SCRIPT_DIR}/osmconf.ini"
 MONITOR="${SCRIPT_DIR}/monitor_resources.sh"
 
-for REQ_FILE in "$SQL_ADDRESSES" "$SQL_ROADS" "$SQL_ENTRANCES" "$OSMCONF"; do
+for REQ_FILE in "$SQL_ADDRESSES" "$SQL_ROADS" "$SQL_ENTRANCES" "$SQL_WATERWAYS" "$OSMCONF"; do
     if [ ! -f "$REQ_FILE" ]; then
         echo "****************************************************************"
         echo " ERROR: Required file not found: $REQ_FILE"
@@ -203,15 +229,21 @@ if [ -n "$RESOURCE_LOG" ]; then
 fi
 
 # --- Execution ---
-INPUT_MB="$(du -sm "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF" 2>/dev/null | awk '{s+=$1} END {print s+0}')"
+INPUT_MB="$(du -sm "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF" ${WATERWAYS_PBF:+"$WATERWAYS_PBF"} 2>/dev/null | awk '{s+=$1} END {print s+0}')"
 
 echo "[INFO] Addresses PBF : $ADDRESSES_PBF ($(du -sh "$ADDRESSES_PBF" | cut -f1))"
 echo "[INFO] Roads PBF     : $ROADS_PBF ($(du -sh "$ROADS_PBF" | cut -f1))"
 echo "[INFO] Entrances PBF : $ENTRANCES_PBF ($(du -sh "$ENTRANCES_PBF" | cut -f1))"
+if [ -n "${WATERWAYS_PBF:-}" ] && [ -f "$WATERWAYS_PBF" ]; then
+    echo "[INFO] Waterways PBF : $WATERWAYS_PBF ($(du -sh "$WATERWAYS_PBF" | cut -f1))"
+fi
 echo "[INFO] Total PBF size: ${INPUT_MB} MB"
 echo "[INFO] Addresses Out : $ADDRESSES_PARQUET"
 echo "[INFO] Roads Out     : $ROADS_PARQUET"
 echo "[INFO] Entrances Out : $ENTRANCES_PARQUET"
+if [ -n "${WATERWAYS_PBF:-}" ]; then
+    echo "[INFO] Waterways Out : $WATERWAYS_PARQUET"
+fi
 echo "[INFO] Country Code  : $COUNTRY_CODE"
 echo "[INFO] Scratch Dir   : $WORK_TMP_DIR on $SCRATCH_MOUNT (${SCRATCH_AVAIL_MB} MB free, input ${INPUT_MB} MB)"
 echo "[INFO] DuckDB limits : memory=${DUCKDB_MEMORY_LIMIT:-auto} threads=${DUCKDB_THREADS:-auto} max_temp=${DUCKDB_MAX_TEMP_SIZE:-unbounded}"
@@ -316,6 +348,11 @@ export_layer "$SQL_ROADS" "$ROADS_PBF" "$ROADS_PARQUET" "roads"
 
 # 3. Export entrance nodes & access gates
 export_layer "$SQL_ENTRANCES" "$ENTRANCES_PBF" "$ENTRANCES_PARQUET" "entrances"
+
+# 4. Export linear waterways (rivers, canals, streams)
+if [ -n "${WATERWAYS_PBF:-}" ] && [ -f "$WATERWAYS_PBF" ]; then
+    export_layer "$SQL_WATERWAYS" "$WATERWAYS_PBF" "$WATERWAYS_PARQUET" "waterways"
+fi
 
 reset_scratch_dirs
 

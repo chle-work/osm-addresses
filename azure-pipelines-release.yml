@@ -88,6 +88,7 @@ jobs:
         ADDRESS_COUNT=$(find release-assets -name "*.addresses*.parquet" | wc -l)
         ROAD_COUNT=$(find release-assets -name "*.roads*.parquet" | wc -l)
         ENTRANCE_COUNT=$(find release-assets -name "*.entrances*.parquet" | wc -l)
+        WATERWAY_COUNT=$(find release-assets -name "*.waterways*.parquet" | wc -l)
 
         if [ "$PARQUET_COUNT" -eq 0 ]; then
           echo "****************************************************************"
@@ -104,7 +105,7 @@ jobs:
           exit 1
         fi
 
-        echo "[INFO] Found $PARQUET_COUNT GeoParquet file(s) for release ($ADDRESS_COUNT addresses, $ROAD_COUNT roads, $ENTRANCE_COUNT entrances)."
+        echo "[INFO] Found $PARQUET_COUNT GeoParquet file(s) for release ($ADDRESS_COUNT addresses, $ROAD_COUNT roads, $ENTRANCE_COUNT entrances, $WATERWAY_COUNT waterways)."
 
         # Resolve Release Tag and Title dynamically
         RELEASE_TAG="${{ parameters.releaseTag }}"
@@ -127,7 +128,7 @@ jobs:
         cat <<EOF > release-notes.md
         ## OSM GeoParquet Release ($RELEASE_TAG)
 
-        Global ZSTD-compressed GeoParquet datasets containing address points, drivable road centerlines, and entrance/access nodes extracted from OpenStreetMap.
+        Global ZSTD-compressed GeoParquet datasets containing address points, drivable road centerlines, entrance/access nodes, and linear waterways extracted from OpenStreetMap.
 
         ### Datasets & Schemas
 
@@ -166,10 +167,20 @@ jobs:
         | **\`housenumber\`** | \`VARCHAR\` | House number at entrance |
         | **\`geometry\`** | \`GEOMETRY\` | Point geometry (WGS84 EPSG:4326, Hilbert-sorted) |
 
+        #### 4. Linear Waterways (\`<CC>_<region>.waterways.parquet\`)
+        | Column | Type | Description |
+        | :--- | :--- | :--- |
+        | **\`osm_id\`** | \`BIGINT\` | Source OSM Way ID |
+        | **\`osm_type\`** | \`VARCHAR\` | Element type (\`way\`) |
+        | **\`name\`** | \`VARCHAR\` | Waterway name (\`name\` tag) |
+        | **\`waterway\`** | \`VARCHAR\` | Waterway classification (\`river\`, \`canal\`, \`stream\`) |
+        | **\`geometry\`** | \`GEOMETRY\` | LineString geometry (WGS84 EPSG:4326, Hilbert-sorted) |
+
         ### Download Assets
         - **`<CC>_<region>.addresses.parquet`**: Address points ($ADDRESS_COUNT files)
         - **`<CC>_<region>.roads.parquet`**: Drivable road centerlines ($ROAD_COUNT files, partitioned into `.part<N>.parquet` where raw size exceeds GitHub's 2 GiB limit)
         - **`<CC>_<region>.entrances.parquet`**: Entrance nodes & gates ($ENTRANCE_COUNT files)
+        - **`<CC>_<region>.waterways.parquet`**: Linear waterways ($WATERWAY_COUNT files)
 
         Total GeoParquet assets in this release: **$PARQUET_COUNT**.
 

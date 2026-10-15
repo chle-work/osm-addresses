@@ -25,6 +25,7 @@ SQL_TEMPLATES = (
     os.path.join(REPO_ROOT, "scripts", "export_addresses.sql"),
     os.path.join(REPO_ROOT, "scripts", "export_roads.sql"),
     os.path.join(REPO_ROOT, "scripts", "export_entrances.sql"),
+    os.path.join(REPO_ROOT, "scripts", "export_waterways.sql"),
 )
 
 OSMCONF_INI = os.path.join(REPO_ROOT, "scripts", "osmconf.ini")
@@ -184,6 +185,14 @@ class TestOsmconfConfiguration(unittest.TestCase):
                 f"osmconf.ini missing required [{section}] section",
             )
 
+    def test_lines_enables_waterway(self):
+        self.assertTrue(
+            self.config.has_section("lines"),
+            "osmconf.ini must have a [lines] section",
+        )
+        attributes = [a.strip() for a in self.config.get("lines", "attributes").split(",")]
+        self.assertIn("waterway", attributes, "osmconf.ini [lines] must expose 'waterway' attribute")
+
 
 class TestPipelineLayerFiltering(unittest.TestCase):
     """Rule 5: Dedicated per-layer PBF filtering and runner disk conservation."""
@@ -207,8 +216,13 @@ class TestPipelineLayerFiltering(unittest.TestCase):
             self.pipeline_content,
             "azure-pipelines.yml must define dedicated ENTRANCES_PBF",
         )
+        self.assertIn(
+            'WATERWAYS_PBF="$(COUNTRY_CODE)_$(OSM_REGION).waterways.pbf"',
+            self.pipeline_content,
+            "azure-pipelines.yml must define dedicated WATERWAYS_PBF",
+        )
 
-    def test_osmium_filters_three_distinct_layers(self):
+    def test_osmium_filters_distinct_layers(self):
         self.assertIn(
             'osmium tags-filter "$INPUT_PBF" \\\n              n/addr:housenumber wr/addr:housenumber \\\n              -o "$ADDRESSES_PBF"',
             self.pipeline_content,
@@ -224,6 +238,11 @@ class TestPipelineLayerFiltering(unittest.TestCase):
             self.pipeline_content,
             "azure-pipelines.yml must filter entrances separately",
         )
+        self.assertIn(
+            'osmium tags-filter "$INPUT_PBF" \\\n              w/waterway=river,canal,stream \\\n              -o "$WATERWAYS_PBF"',
+            self.pipeline_content,
+            "azure-pipelines.yml must filter waterways separately",
+        )
 
     def test_raw_pbf_reclaimed_immediately(self):
         self.assertIn(
@@ -232,11 +251,11 @@ class TestPipelineLayerFiltering(unittest.TestCase):
             "azure-pipelines.yml must reclaim raw PBF disk space immediately after filtering",
         )
 
-    def test_convert_sh_invoked_with_three_layer_pbfs(self):
+    def test_convert_sh_invoked_with_four_layer_pbfs(self):
         self.assertIn(
-            './scripts/convert.sh "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF"',
+            './scripts/convert.sh "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF" "$WATERWAYS_PBF"',
             self.pipeline_content,
-            "convert.sh must be invoked with 3 dedicated layer PBF arguments",
+            "convert.sh must be invoked with 4 dedicated layer PBF arguments",
         )
 
     def test_oversized_parquets_are_partitioned_before_artifact_publication(self):

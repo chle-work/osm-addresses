@@ -10,6 +10,7 @@ from validate_parquet import (
     validate_addresses_file,
     validate_roads_file,
     validate_entrances_file,
+    validate_waterways_file,
 )
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -17,6 +18,7 @@ AT_DIR = os.path.join(REPO_ROOT, "osm-parquet-AT-austria")
 AT_ADDRESSES = os.path.join(AT_DIR, "AT_austria.addresses.parquet")
 AT_ROADS = os.path.join(AT_DIR, "AT_austria.roads.parquet")
 AT_ENTRANCES = os.path.join(AT_DIR, "AT_austria.entrances.parquet")
+AT_WATERWAYS = os.path.join(AT_DIR, "AT_austria.waterways.parquet")
 
 
 class TestValidateParquet(unittest.TestCase):
@@ -25,6 +27,10 @@ class TestValidateParquet(unittest.TestCase):
         res = validate_addresses_file("nonexistent.parquet")
         self.assertEqual(res["status"], "ERROR")
         self.assertIn("File missing or 0 bytes", res["issues"])
+
+        res_waterways = validate_waterways_file("nonexistent_waterways.parquet")
+        self.assertEqual(res_waterways["status"], "ERROR")
+        self.assertIn("File missing or 0 bytes", res_waterways["issues"])
 
     @unittest.skipUnless(os.path.exists(AT_ADDRESSES), "AT addresses fixture not present")
     def test_austria_addresses_validation(self):

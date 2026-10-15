@@ -46,6 +46,7 @@ REQUIRED_METADATA_KEYS = [
 ADDRESS_REQUIRED_COLUMNS = ["osm_id", "osm_type", "number", "street", "geometry"]
 ROAD_REQUIRED_COLUMNS = ["osm_id", "osm_type", "highway", "geometry"]
 ENTRANCE_REQUIRED_COLUMNS = ["osm_id", "osm_type", "geometry"]
+WATERWAY_REQUIRED_COLUMNS = ["osm_id", "osm_type", "waterway", "name", "geometry"]
 
 
 def run_duckdb_query(sql):
@@ -240,6 +241,57 @@ def validate_entrances_file(file_path):
     return {"file": file_path, "status": status, "issues": issues, "stats": stats}
 
 
+def validate_waterways_file(file_path):
+    """Validate waterways.parquet file."""
+    issues = []
+    stats = {}
+    if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+        return {"file": file_path, "status": "ERROR", "issues": ["File missing or 0 bytes"], "stats": {}}
+
+    try:
+        cols = get_parquet_columns(file_path)
+        stats["columns"] = cols
+        for req_col in WATERWAY_REQUIRED_COLUMNS:
+            if req_col not in cols:
+                issues.append(f"Missing required column '{req_col}'")
+
+        meta_keys = get_parquet_metadata_keys(file_path)
+        missing_meta = [k for k in REQUIRED_METADATA_KEYS if k not in meta_keys]
+        if missing_meta:
+            issues.append(f"Missing KV_METADATA keys: {missing_meta}")
+
+        sql = f"""
+        SELECT
+            count(*) AS total_rows,
+            count(*) FILTER (WHERE osm_id IS NULL) AS null_id_count,
+            min(osm_id) AS min_osm_id,
+            max(osm_id) AS max_osm_id,
+            count(*) FILTER (WHERE name IS NULL) AS unnamed_count,
+            count(*) FILTER (WHERE waterway IN ('river', 'canal', 'stream')) AS valid_waterway_count
+        FROM read_parquet('{file_path}');
+        """
+        rows = run_duckdb_query(sql)
+        if rows:
+            r = rows[0]
+            stats.update(r)
+            total = r.get("total_rows", 0)
+            null_ids = r.get("null_id_count", 0)
+            unnamed = r.get("unnamed_count", 0)
+
+            if total == 0:
+                issues.append("Dataset is empty (0 waterways)")
+            if null_ids > 0:
+                issues.append(f"Found {null_ids} waterways with NULL osm_id")
+            if unnamed > 0:
+                issues.append(f"Found {unnamed} unnamed waterways (only named waterways should be exported)")
+
+    except Exception as exc:
+        issues.append(f"Query error: {exc}")
+
+    status = "ERROR" if issues else "OK"
+    return {"file": file_path, "status": status, "issues": issues, "stats": stats}
+
+
 def main():
     parser = argparse.ArgumentParser(description="Validate osm-addresses GeoParquet datasets.")
     parser.add_argument("targets", nargs="+", help="Parquet files, directories, or prefixes to validate")
@@ -272,6 +324,8 @@ def main():
             results.append(validate_roads_file(fp))
         elif ".entrances" in basename:
             results.append(validate_entrances_file(fp))
+        elif ".waterways" in basename:
+            results.append(validate_waterways_file(fp))
         else:
             # Generic parquet check
             results.append({"file": fp, "status": "SKIPPED", "issues": ["Unknown layer type"], "stats": {}})

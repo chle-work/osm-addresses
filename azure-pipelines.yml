@@ -965,6 +965,7 @@ stages:
           ADDRESSES_PBF="$(COUNTRY_CODE)_$(OSM_REGION).addresses.pbf"
           ROADS_PBF="$(COUNTRY_CODE)_$(OSM_REGION).roads.pbf"
           ENTRANCES_PBF="$(COUNTRY_CODE)_$(OSM_REGION).entrances.pbf"
+          WATERWAYS_PBF="$(COUNTRY_CODE)_$(OSM_REGION).waterways.pbf"
           OUTPUT_PARQUET="$(COUNTRY_CODE)_$(OSM_REGION).addresses.parquet"
           SKIP_OSMIUM="${{ parameters.skipOsmiumFilter }}"
 
@@ -1009,11 +1010,16 @@ stages:
               n/entrance n/barrier=gate,lift_gate \
               -o "$ENTRANCES_PBF" --overwrite
 
+            echo "[INFO] Filtering waterway features via osmium..."
+            osmium tags-filter "$INPUT_PBF" \
+              w/waterway=river,canal,stream \
+              -o "$WATERWAYS_PBF" --overwrite
+
             echo "[INFO] Reclaiming disk space: removing raw input PBF immediately..."
             rm -rf "osm-data-$(OSM_REGION)" "$(OSM_REGION).osm.pbf"
           else
             echo "[INFO] Skipping Osmium filter stage (using pre-filtered PBF artifacts)."
-            for PBF_NAME in "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF"; do
+            for PBF_NAME in "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF" "$WATERWAYS_PBF"; do
               if [ ! -f "$PBF_NAME" ]; then
                 FOUND=$(find . -name "$PBF_NAME" 2>/dev/null | head -n 1)
                 if [ -n "$FOUND" ] && [ -f "$FOUND" ]; then
@@ -1031,7 +1037,7 @@ stages:
 
           echo "[INFO] Converting filtered PBFs to GeoParquet via DuckDB..."
           chmod +x scripts/convert.sh
-          ./scripts/convert.sh "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF" "$OUTPUT_PARQUET" "$(COUNTRY_CODE)"
+          ./scripts/convert.sh "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF" "$WATERWAYS_PBF" "$OUTPUT_PARQUET" "$(COUNTRY_CODE)"
 
           echo "[INFO] Validating output GeoParquet files..."
           python3 scripts/validate_parquet.py "$(COUNTRY_CODE)_$(OSM_REGION)".*.parquet --fail-on-error
@@ -1047,7 +1053,7 @@ stages:
           cp "$(COUNTRY_CODE)_$(OSM_REGION)".*.parquet "artifacts-$(COUNTRY_CODE)-$(OSM_REGION)/"
 
           mkdir -p "pbf-$(COUNTRY_CODE)-$(OSM_REGION)"
-          cp "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF" "pbf-$(COUNTRY_CODE)-$(OSM_REGION)/" 2>/dev/null || true
+          cp "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF" "$WATERWAYS_PBF" "pbf-$(COUNTRY_CODE)-$(OSM_REGION)/" 2>/dev/null || true
 
     # The filtered PBFs are the expensive intermediate (after long osmium passes).
     # Retaining them lets a re-run with skipOsmiumFilter=true jump straight to the
@@ -1071,7 +1077,7 @@ stages:
     # layer set would let an incomplete dataset reach a release.
     - task: PublishPipelineArtifact@1
       enabled: true
-      displayName: 'Publish GeoParquet artifacts (addresses, roads, entrances)'
+      displayName: 'Publish GeoParquet artifacts (addresses, roads, entrances, waterways)'
       inputs:
         targetPath: 'artifacts-$(COUNTRY_CODE)-$(OSM_REGION)'
         artifact: 'osm-parquet-$(COUNTRY_CODE)-$(OSM_REGION)'
