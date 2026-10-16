@@ -140,7 +140,7 @@ def validate_addresses_file(file_path):
         issues.append(f"Query error: {exc}")
 
     status = "ERROR" if issues else "OK"
-    return {"file": file_path, "status": status, "issues": issues, "stats": stats}
+    return {"file": file_path, "status": status, "issues": issues, "warnings": [], "stats": stats}
 
 
 def validate_roads_file(file_path):
@@ -148,7 +148,7 @@ def validate_roads_file(file_path):
     issues = []
     stats = {}
     if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-        return {"file": file_path, "status": "ERROR", "issues": ["File missing or 0 bytes"], "stats": {}}
+        return {"file": file_path, "status": "ERROR", "issues": ["File missing or 0 bytes"], "warnings": [], "stats": {}}
 
     try:
         cols = get_parquet_columns(file_path)
@@ -196,7 +196,7 @@ def validate_roads_file(file_path):
         issues.append(f"Query error: {exc}")
 
     status = "ERROR" if issues else "OK"
-    return {"file": file_path, "status": status, "issues": issues, "stats": stats}
+    return {"file": file_path, "status": status, "issues": issues, "warnings": [], "stats": stats}
 
 
 def validate_entrances_file(file_path):
@@ -204,7 +204,7 @@ def validate_entrances_file(file_path):
     issues = []
     stats = {}
     if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-        return {"file": file_path, "status": "ERROR", "issues": ["File missing or 0 bytes"], "stats": {}}
+        return {"file": file_path, "status": "ERROR", "issues": ["File missing or 0 bytes"], "warnings": [], "stats": {}}
 
     try:
         cols = get_parquet_columns(file_path)
@@ -238,15 +238,16 @@ def validate_entrances_file(file_path):
         issues.append(f"Query error: {exc}")
 
     status = "ERROR" if issues else "OK"
-    return {"file": file_path, "status": status, "issues": issues, "stats": stats}
+    return {"file": file_path, "status": status, "issues": issues, "warnings": [], "stats": stats}
 
 
 def validate_waterways_file(file_path):
     """Validate waterways.parquet file."""
     issues = []
+    warnings = []
     stats = {}
     if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-        return {"file": file_path, "status": "ERROR", "issues": ["File missing or 0 bytes"], "stats": {}}
+        return {"file": file_path, "status": "ERROR", "issues": ["File missing or 0 bytes"], "warnings": [], "stats": {}}
 
     try:
         cols = get_parquet_columns(file_path)
@@ -279,7 +280,7 @@ def validate_waterways_file(file_path):
             unnamed = r.get("unnamed_count", 0)
 
             if total == 0:
-                issues.append("Dataset is empty (0 waterways)")
+                warnings.append("Dataset has 0 waterways (expected for atolls, microstates, and islands without surface river networks)")
             if null_ids > 0:
                 issues.append(f"Found {null_ids} waterways with NULL osm_id")
             if unnamed > 0:
@@ -288,8 +289,8 @@ def validate_waterways_file(file_path):
     except Exception as exc:
         issues.append(f"Query error: {exc}")
 
-    status = "ERROR" if issues else "OK"
-    return {"file": file_path, "status": status, "issues": issues, "stats": stats}
+    status = "ERROR" if issues else ("WARN" if warnings else "OK")
+    return {"file": file_path, "status": status, "issues": issues, "warnings": warnings, "stats": stats}
 
 
 def main():
@@ -338,8 +339,9 @@ def main():
     for res in results:
         fp = res["file"]
         status = res["status"]
-        issues = res["issues"]
-        stats = res["stats"]
+        issues = res.get("issues", [])
+        warnings = res.get("warnings", [])
+        stats = res.get("stats", {})
 
         status_tag = f"[{status}]"
         print(f"\n{status_tag:<10} {fp}")
@@ -351,17 +353,22 @@ def main():
                 print(f"           - {issue}")
                 if "POTENTIAL REGRESSION" in issue:
                     print(f"##vso[task.logissue type=error]Regression in {fp}: {issue}")
-                elif status == "ERROR":
-                    print(f"##vso[task.logissue type=error]Validation failure in {fp}: {issue}")
                 else:
-                    print(f"##vso[task.logissue type=warning]Validation notice in {fp}: {issue}")
-            if status == "ERROR":
-                has_errors = True
+                    print(f"##vso[task.logissue type=error]Validation failure in {fp}: {issue}")
+            has_errors = True
+        if warnings:
+            for warning in warnings:
+                print(f"           - {warning}")
+                print(f"##vso[task.logissue type=warning]Validation notice in {fp}: {warning}")
 
     print("\n" + "=" * 80)
     total_files = len(results)
     err_files = sum(1 for r in results if r["status"] == "ERROR")
-    print(f"Summary: {total_files} file(s) checked, {err_files} error(s).")
+    warn_files = sum(1 for r in results if r["status"] == "WARN")
+    if warn_files > 0:
+        print(f"Summary: {total_files} file(s) checked, {err_files} error(s), {warn_files} warning(s).")
+    else:
+        print(f"Summary: {total_files} file(s) checked, {err_files} error(s).")
     print("=" * 80 + "\n")
 
     if has_errors and args.fail_on_error:

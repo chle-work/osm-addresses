@@ -6,11 +6,15 @@ Unit tests for validate_parquet.py.
 import os
 import unittest
 
+from unittest.mock import patch
+
 from validate_parquet import (
     validate_addresses_file,
     validate_roads_file,
     validate_entrances_file,
     validate_waterways_file,
+    WATERWAY_REQUIRED_COLUMNS,
+    REQUIRED_METADATA_KEYS,
 )
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -31,6 +35,54 @@ class TestValidateParquet(unittest.TestCase):
         res_waterways = validate_waterways_file("nonexistent_waterways.parquet")
         self.assertEqual(res_waterways["status"], "ERROR")
         self.assertIn("File missing or 0 bytes", res_waterways["issues"])
+
+    @patch("validate_parquet.get_parquet_columns")
+    @patch("validate_parquet.get_parquet_metadata_keys")
+    @patch("validate_parquet.run_duckdb_query")
+    @patch("validate_parquet.os.path.getsize", return_value=1024)
+    @patch("validate_parquet.os.path.exists", return_value=True)
+    def test_empty_waterways_reports_warning_not_error(
+        self, mock_exists, mock_getsize, mock_query, mock_meta, mock_cols
+    ):
+        mock_cols.return_value = list(WATERWAY_REQUIRED_COLUMNS)
+        mock_meta.return_value = list(REQUIRED_METADATA_KEYS)
+        mock_query.return_value = [{
+            "total_rows": 0,
+            "null_id_count": 0,
+            "min_osm_id": None,
+            "max_osm_id": None,
+            "unnamed_count": 0,
+            "valid_waterway_count": 0,
+        }]
+
+        res = validate_waterways_file("MV_maldives.waterways.parquet")
+        self.assertEqual(res["status"], "WARN")
+        self.assertEqual(len(res["issues"]), 0)
+        self.assertEqual(len(res["warnings"]), 1)
+        self.assertIn("0 waterways", res["warnings"][0])
+
+    @patch("validate_parquet.get_parquet_columns")
+    @patch("validate_parquet.get_parquet_metadata_keys")
+    @patch("validate_parquet.run_duckdb_query")
+    @patch("validate_parquet.os.path.getsize", return_value=1024)
+    @patch("validate_parquet.os.path.exists", return_value=True)
+    def test_waterways_with_unnamed_reports_error(
+        self, mock_exists, mock_getsize, mock_query, mock_meta, mock_cols
+    ):
+        mock_cols.return_value = list(WATERWAY_REQUIRED_COLUMNS)
+        mock_meta.return_value = list(REQUIRED_METADATA_KEYS)
+        mock_query.return_value = [{
+            "total_rows": 10,
+            "null_id_count": 0,
+            "min_osm_id": 100,
+            "max_osm_id": 200,
+            "unnamed_count": 2,
+            "valid_waterway_count": 10,
+        }]
+
+        res = validate_waterways_file("AT_austria.waterways.parquet")
+        self.assertEqual(res["status"], "ERROR")
+        self.assertIn("unnamed waterways", res["issues"][0])
 
     @unittest.skipUnless(os.path.exists(AT_ADDRESSES), "AT addresses fixture not present")
     def test_austria_addresses_validation(self):
