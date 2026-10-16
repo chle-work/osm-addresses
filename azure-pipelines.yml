@@ -22,6 +22,10 @@ parameters:
   displayName: 'Skip Osmium filtering (use pre-filtered PBF pipeline artifacts)'
   type: boolean
   default: false
+- name: pbfBuildId
+  displayName: 'Specific build ID of addresses-parquet pipeline (definition 6) to reuse pre-filtered PBFs from (default "latest" or "auto")'
+  type: string
+  default: 'latest'
 - name: downloadBuildId
   displayName: 'Specific build ID of osm-download-pbf pipeline (definition 9) or latest'
   type: string
@@ -935,14 +939,35 @@ stages:
           targetPath: '$(System.DefaultWorkingDirectory)'
 
     # Download pre-filtered PBF artifacts when skipOsmiumFilter is true
-    - task: DownloadPipelineArtifact@2
-      enabled: true
-      displayName: 'Download pre-filtered PBF artifacts'
-      condition: ${{ eq(parameters.skipOsmiumFilter, true) }}
-      inputs:
-        buildType: 'current'
-        artifact: 'osm-pbf-$(COUNTRY_CODE)-$(OSM_REGION)'
-        targetPath: '$(System.DefaultWorkingDirectory)'
+    - ${{ if and(ne(parameters.pbfBuildId, 'latest'), ne(parameters.pbfBuildId, 'auto'), ne(parameters.pbfBuildId, '')) }}:
+      - task: DownloadPipelineArtifact@2
+        enabled: true
+        displayName: 'Download pre-filtered PBF artifacts (from addresses-parquet build ${{ parameters.pbfBuildId }})'
+        condition: ${{ eq(parameters.skipOsmiumFilter, true) }}
+        inputs:
+          buildType: 'specific'
+          project: 'f85b0393-1484-487a-b6d1-5120b54a70be'
+          definition: '6'
+          buildVersionToDownload: 'specific'
+          pipelineId: '${{ parameters.pbfBuildId }}'
+          allowFailedBuilds: true
+          allowPartiallySucceededBuilds: true
+          artifactName: 'osm-pbf-$(COUNTRY_CODE)-$(OSM_REGION)'
+          targetPath: '$(System.DefaultWorkingDirectory)'
+    - ${{ if or(eq(parameters.pbfBuildId, 'latest'), eq(parameters.pbfBuildId, 'auto'), eq(parameters.pbfBuildId, '')) }}:
+      - task: DownloadPipelineArtifact@2
+        enabled: true
+        displayName: 'Download pre-filtered PBF artifacts (from addresses-parquet latest build)'
+        condition: ${{ eq(parameters.skipOsmiumFilter, true) }}
+        inputs:
+          buildType: 'specific'
+          project: 'f85b0393-1484-487a-b6d1-5120b54a70be'
+          definition: '6'
+          buildVersionToDownload: 'latest'
+          allowFailedBuilds: true
+          allowPartiallySucceededBuilds: true
+          artifactName: 'osm-pbf-$(COUNTRY_CODE)-$(OSM_REGION)'
+          targetPath: '$(System.DefaultWorkingDirectory)'
 
     - task: Bash@3
       enabled: true
@@ -1014,6 +1039,9 @@ stages:
             osmium tags-filter "$INPUT_PBF" \
               w/waterway=river,canal,stream \
               -o "$WATERWAYS_PBF" --overwrite
+
+            mkdir -p "pbf-$(COUNTRY_CODE)-$(OSM_REGION)"
+            cp "$ADDRESSES_PBF" "$ROADS_PBF" "$ENTRANCES_PBF" "$WATERWAYS_PBF" "pbf-$(COUNTRY_CODE)-$(OSM_REGION)/"
 
             echo "[INFO] Reclaiming disk space: removing raw input PBF immediately..."
             rm -rf "osm-data-$(OSM_REGION)" "$(OSM_REGION).osm.pbf"
