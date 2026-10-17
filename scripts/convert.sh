@@ -303,8 +303,14 @@ export_layer() {
 
     reset_scratch_dirs
 
-    local WATERWAYS_RELS_OPL_ARG="${WATERWAYS_RELS_OPL:-${DUCKDB_TEMP_DIR}/empty.opl}"
-    touch "$WATERWAYS_RELS_OPL_ARG"
+    local DEFAULT_EMPTY_OPL=""
+    local WATERWAYS_RELS_OPL_ARG=""
+    if [ -n "${WATERWAYS_RELS_OPL:-}" ] && [ -f "$WATERWAYS_RELS_OPL" ]; then
+        WATERWAYS_RELS_OPL_ARG="$WATERWAYS_RELS_OPL"
+    else
+        DEFAULT_EMPTY_OPL=$(mktemp /tmp/waterways_empty_XXXXXX.opl)
+        WATERWAYS_RELS_OPL_ARG="$DEFAULT_EMPTY_OPL"
+    fi
 
     echo "[INFO] Exporting ${LAYER_NAME} (${LAYER_PBF}) -> ${TARGET_PARQUET}..."
     local TMP_SQL
@@ -321,6 +327,9 @@ export_layer() {
 
     duckdb < "$TMP_SQL"
     rm -f "$TMP_SQL"
+    if [ -n "$DEFAULT_EMPTY_OPL" ]; then
+        rm -f "$DEFAULT_EMPTY_OPL"
+    fi
 
     if [ ! -f "$TARGET_PARQUET" ]; then
         echo "****************************************************************"
@@ -355,7 +364,7 @@ export_layer "$SQL_ENTRANCES" "$ENTRANCES_PBF" "$ENTRANCES_PARQUET" "entrances"
 
 # 4. Export linear waterways (rivers, canals, streams)
 if [ -n "${WATERWAYS_PBF:-}" ] && [ -f "$WATERWAYS_PBF" ]; then
-    WATERWAYS_RELS_OPL="${DUCKDB_TEMP_DIR}/waterway_relations.opl"
+    WATERWAYS_RELS_OPL=$(mktemp /tmp/waterways_relations_XXXXXX.opl)
     if command -v osmium >/dev/null 2>&1; then
         echo "[INFO] Extracting waterway relations into lightweight OPL index..."
         osmium tags-filter "$WATERWAYS_PBF" r/waterway=river,canal,stream r/type=waterway -o "$WATERWAYS_RELS_OPL" -f opl --overwrite 2>/dev/null || touch "$WATERWAYS_RELS_OPL"
@@ -363,6 +372,8 @@ if [ -n "${WATERWAYS_PBF:-}" ] && [ -f "$WATERWAYS_PBF" ]; then
         touch "$WATERWAYS_RELS_OPL"
     fi
     export_layer "$SQL_WATERWAYS" "$WATERWAYS_PBF" "$WATERWAYS_PARQUET" "waterways"
+    rm -f "$WATERWAYS_RELS_OPL"
+    unset WATERWAYS_RELS_OPL
 fi
 
 reset_scratch_dirs

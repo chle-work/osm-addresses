@@ -101,7 +101,7 @@ members_parsed AS (
         relation_id,
         rel_tags,
         CAST(regexp_extract(member_str, '^w([0-9]+)', 1) AS BIGINT) AS way_id,
-        NULLIF(split_part(member_str, '@', 2), '') AS member_role
+        opl_decode(NULLIF(split_part(member_str, '@', 2), '')) AS member_role
     FROM members_unnested
     WHERE member_str LIKE 'w%'
 ),

@@ -132,6 +132,14 @@ class TestSqlTemplatesMetadata(unittest.TestCase):
             "convert.sh must substitute __WATERWAYS_RELS_OPL__ placeholder",
         )
 
+    def test_waterways_rels_opl_not_in_duckdb_temp_dir(self):
+        content = read_file(CONVERT_SH)
+        self.assertNotIn(
+            'WATERWAYS_RELS_OPL="${DUCKDB_TEMP_DIR}/',
+            content,
+            "WATERWAYS_RELS_OPL must not be placed in DUCKDB_TEMP_DIR because reset_scratch_dirs wipes it",
+        )
+
 
 class TestGdalInterleavedReading(unittest.TestCase):
     """Rule 12: All ST_Read calls must specify INTERLEAVED_READING=YES."""
