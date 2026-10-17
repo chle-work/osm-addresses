@@ -1037,7 +1037,7 @@ stages:
 
             echo "[INFO] Filtering waterway features via osmium..."
             osmium tags-filter "$INPUT_PBF" \
-              w/waterway=river,canal,stream \
+              wr/waterway=river,canal,stream r/type=waterway \
               -o "$WATERWAYS_PBF" --overwrite
 
             mkdir -p "pbf-$(COUNTRY_CODE)-$(OSM_REGION)"

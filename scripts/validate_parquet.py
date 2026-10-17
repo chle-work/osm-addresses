@@ -46,7 +46,17 @@ REQUIRED_METADATA_KEYS = [
 ADDRESS_REQUIRED_COLUMNS = ["osm_id", "osm_type", "number", "street", "geometry"]
 ROAD_REQUIRED_COLUMNS = ["osm_id", "osm_type", "highway", "geometry"]
 ENTRANCE_REQUIRED_COLUMNS = ["osm_id", "osm_type", "geometry"]
-WATERWAY_REQUIRED_COLUMNS = ["osm_id", "osm_type", "waterway", "name", "geometry"]
+WATERWAY_REQUIRED_COLUMNS = [
+    "osm_id",
+    "osm_type",
+    "name",
+    "waterway",
+    "relation_id",
+    "member_role",
+    "alt_names",
+    "tags",
+    "geometry",
+]
 
 
 def run_duckdb_query(sql):
@@ -268,7 +278,10 @@ def validate_waterways_file(file_path):
             min(osm_id) AS min_osm_id,
             max(osm_id) AS max_osm_id,
             count(*) FILTER (WHERE name IS NULL) AS unnamed_count,
-            count(*) FILTER (WHERE waterway IN ('river', 'canal', 'stream')) AS valid_waterway_count
+            count(*) FILTER (WHERE waterway IN ('river', 'canal', 'stream')) AS valid_waterway_count,
+            count(*) FILTER (WHERE relation_id IS NOT NULL) AS in_relation_count,
+            count(*) FILTER (WHERE alt_names IS NOT NULL) AS with_alt_names_count,
+            count(*) FILTER (WHERE tags IS NOT NULL) AS with_tags_count
         FROM read_parquet('{file_path}');
         """
         rows = run_duckdb_query(sql)

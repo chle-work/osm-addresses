@@ -303,6 +303,9 @@ export_layer() {
 
     reset_scratch_dirs
 
+    local WATERWAYS_RELS_OPL_ARG="${WATERWAYS_RELS_OPL:-${DUCKDB_TEMP_DIR}/empty.opl}"
+    touch "$WATERWAYS_RELS_OPL_ARG"
+
     echo "[INFO] Exporting ${LAYER_NAME} (${LAYER_PBF}) -> ${TARGET_PARQUET}..."
     local TMP_SQL
     TMP_SQL=$(mktemp /tmp/export_XXXXXX.sql)
@@ -313,6 +316,7 @@ export_layer() {
         -e "s|__EXPORTED_AT__|${EXPORTED_AT}|g" \
         -e "s|__OSM_DATA_TIMESTAMP__|${OSM_DATA_TIMESTAMP}|g" \
         -e "s|__OSMCONF__|${OSMCONF}|g" \
+        -e "s|__WATERWAYS_RELS_OPL__|${WATERWAYS_RELS_OPL_ARG}|g" \
         "$SQL_TEMPLATE" >> "$TMP_SQL"
 
     duckdb < "$TMP_SQL"
@@ -351,6 +355,13 @@ export_layer "$SQL_ENTRANCES" "$ENTRANCES_PBF" "$ENTRANCES_PARQUET" "entrances"
 
 # 4. Export linear waterways (rivers, canals, streams)
 if [ -n "${WATERWAYS_PBF:-}" ] && [ -f "$WATERWAYS_PBF" ]; then
+    WATERWAYS_RELS_OPL="${DUCKDB_TEMP_DIR}/waterway_relations.opl"
+    if command -v osmium >/dev/null 2>&1; then
+        echo "[INFO] Extracting waterway relations into lightweight OPL index..."
+        osmium tags-filter "$WATERWAYS_PBF" r/waterway=river,canal,stream r/type=waterway -o "$WATERWAYS_RELS_OPL" -f opl --overwrite 2>/dev/null || touch "$WATERWAYS_RELS_OPL"
+    else
+        touch "$WATERWAYS_RELS_OPL"
+    fi
     export_layer "$SQL_WATERWAYS" "$WATERWAYS_PBF" "$WATERWAYS_PARQUET" "waterways"
 fi
 

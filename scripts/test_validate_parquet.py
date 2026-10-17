@@ -53,6 +53,9 @@ class TestValidateParquet(unittest.TestCase):
             "max_osm_id": None,
             "unnamed_count": 0,
             "valid_waterway_count": 0,
+            "in_relation_count": 0,
+            "with_alt_names_count": 0,
+            "with_tags_count": 0,
         }]
 
         res = validate_waterways_file("MV_maldives.waterways.parquet")
@@ -78,6 +81,9 @@ class TestValidateParquet(unittest.TestCase):
             "max_osm_id": 200,
             "unnamed_count": 2,
             "valid_waterway_count": 10,
+            "in_relation_count": 5,
+            "with_alt_names_count": 4,
+            "with_tags_count": 10,
         }]
 
         res = validate_waterways_file("AT_austria.waterways.parquet")

@@ -172,8 +172,12 @@ jobs:
         | :--- | :--- | :--- |
         | **\`osm_id\`** | \`BIGINT\` | Source OSM Way ID |
         | **\`osm_type\`** | \`VARCHAR\` | Element type (\`way\`) |
-        | **\`name\`** | \`VARCHAR\` | Waterway name (\`name\` tag) |
+        | **\`name\`** | \`VARCHAR\` | Waterway name (\`name\` tag, coalesced from way or relation) |
         | **\`waterway\`** | \`VARCHAR\` | Waterway classification (\`river\`, \`canal\`, \`stream\`) |
+        | **\`relation_id\`** | \`BIGINT\` | Parent waterway relation ID (e.g. \`89652\` for Danube) or \`NULL\` |
+        | **\`member_role\`** | \`VARCHAR\` | Role in parent relation (e.g. \`'main_stream'\`, \`'side_stream'\`) or \`NULL\` |
+        | **\`alt_names\`** | \`MAP(VARCHAR, VARCHAR)\` | Localized & alternative names (\`en\`, \`de\`, \`alt_name\`, etc.) |
+        | **\`tags\`** | \`MAP(VARCHAR, VARCHAR)\` | Complete raw OSM tags map (merged from way and parent relation) |
         | **\`geometry\`** | \`GEOMETRY\` | LineString geometry (WGS84 EPSG:4326, Hilbert-sorted) |
 
         ### Download Assets

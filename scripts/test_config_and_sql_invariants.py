@@ -124,6 +124,14 @@ class TestSqlTemplatesMetadata(unittest.TestCase):
             "convert.sh must substitute __OSM_DATA_TIMESTAMP__ placeholder",
         )
 
+    def test_convert_sh_substitutes_waterways_rels_opl(self):
+        content = read_file(CONVERT_SH)
+        self.assertIn(
+            "__WATERWAYS_RELS_OPL__",
+            content,
+            "convert.sh must substitute __WATERWAYS_RELS_OPL__ placeholder",
+        )
+
 
 class TestGdalInterleavedReading(unittest.TestCase):
     """Rule 12: All ST_Read calls must specify INTERLEAVED_READING=YES."""
@@ -193,6 +201,17 @@ class TestOsmconfConfiguration(unittest.TestCase):
         attributes = [a.strip() for a in self.config.get("lines", "attributes").split(",")]
         self.assertIn("waterway", attributes, "osmconf.ini [lines] must expose 'waterway' attribute")
 
+    def test_lines_enables_other_tags(self):
+        self.assertTrue(
+            self.config.has_section("lines"),
+            "osmconf.ini must have a [lines] section",
+        )
+        self.assertEqual(
+            self.config.get("lines", "other_tags").strip().lower(),
+            "yes",
+            "osmconf.ini [lines] must set 'other_tags=yes' to expose multilingual and raw tags",
+        )
+
 
 class TestPipelineLayerFiltering(unittest.TestCase):
     """Rule 5: Dedicated per-layer PBF filtering and runner disk conservation."""
@@ -239,7 +258,7 @@ class TestPipelineLayerFiltering(unittest.TestCase):
             "azure-pipelines.yml must filter entrances separately",
         )
         self.assertIn(
-            'osmium tags-filter "$INPUT_PBF" \\\n              w/waterway=river,canal,stream \\\n              -o "$WATERWAYS_PBF"',
+            'osmium tags-filter "$INPUT_PBF" \\\n              wr/waterway=river,canal,stream r/type=waterway \\\n              -o "$WATERWAYS_PBF"',
             self.pipeline_content,
             "azure-pipelines.yml must filter waterways separately",
         )
@@ -312,6 +331,105 @@ class TestConvertScriptInvariants(unittest.TestCase):
             self.script_content,
             "convert.sh must export OSM_COMPRESS_NODES with default YES",
         )
+
+
+class TestWaterwaysSqlInvariants(unittest.TestCase):
+    """Invariants for waterways export: relation membership, alt_names, and tags."""
+
+    def setUp(self):
+        sql_path = os.path.join(REPO_ROOT, "scripts", "export_waterways.sql")
+        self.sql_content = read_file(sql_path)
+
+    def test_waterways_sql_selects_expected_columns(self):
+        for col in ("relation_id", "member_role", "alt_names", "tags", "waterway", "geometry"):
+            self.assertIn(
+                col,
+                self.sql_content,
+                f"export_waterways.sql must project '{col}' column",
+            )
+
+    def test_waterways_sql_defines_required_macros(self):
+        for macro_name in ("hstore_to_map", "extract_alt_names", "opl_decode", "build_way_tags"):
+            self.assertIn(
+                f"MACRO {macro_name}",
+                self.sql_content,
+                f"export_waterways.sql must define MACRO {macro_name}",
+            )
+
+    def test_waterways_sql_joins_relation_members(self):
+        self.assertIn(
+            "waterway_rel_members",
+            self.sql_content,
+            "export_waterways.sql must build and join waterway_rel_members",
+        )
+        self.assertIn(
+            "__WATERWAYS_RELS_OPL__",
+            self.sql_content,
+            "export_waterways.sql must reference __WATERWAYS_RELS_OPL__ placeholder",
+        )
+
+    def test_waterways_macros_duckdb_execution(self):
+        import shutil
+        import subprocess
+
+        if not shutil.which("duckdb"):
+            self.skipTest("duckdb CLI not available on host")
+
+        test_query = """
+        CREATE OR REPLACE MACRO hstore_to_map(hstore_str) AS
+        CASE
+            WHEN hstore_str IS NULL OR trim(hstore_str) = '' THEN CAST(NULL AS MAP(VARCHAR, VARCHAR))
+            ELSE
+                map(
+                    [replace(split_part(p, '\"=>\"', 1), '\\\"', '\"') for p in string_split(trim(hstore_str, '\"'), '\",\"')],
+                    [replace(split_part(p, '\"=>\"', 2), '\\\"', '\"') for p in string_split(trim(hstore_str, '\"'), '\",\"')]
+                )
+        END;
+
+        CREATE OR REPLACE MACRO extract_alt_names(props) AS
+        CASE
+            WHEN props IS NULL THEN CAST(NULL AS MAP(VARCHAR, VARCHAR))
+            ELSE
+                CASE 
+                    WHEN len([k for k in map_keys(props)
+                              if ((k LIKE 'name:%' AND k NOT LIKE 'name:%:%' AND substring(k, 6) NOT IN ('etymology', 'source', 'botanical', 'prefix', 'genitive', 'left', 'right', 'signed'))
+                                  OR k IN ('alt_name', 'int_name', 'official_name', 'loc_name', 'reg_name', 'short_name', 'old_name'))
+                                 AND props[k] IS NOT NULL AND props[k] != '']) = 0
+                    THEN CAST(NULL AS MAP(VARCHAR, VARCHAR))
+                    ELSE
+                        map(
+                            [CASE WHEN k LIKE 'name:%' THEN substring(k, 6) ELSE k END for k in map_keys(props)
+                             if ((k LIKE 'name:%' AND k NOT LIKE 'name:%:%' AND substring(k, 6) NOT IN ('etymology', 'source', 'botanical', 'prefix', 'genitive', 'left', 'right', 'signed'))
+                                 OR k IN ('alt_name', 'int_name', 'official_name', 'loc_name', 'reg_name', 'short_name', 'old_name'))
+                                AND props[k] IS NOT NULL AND props[k] != ''],
+                            [props[k] for k in map_keys(props)
+                             if ((k LIKE 'name:%' AND k NOT LIKE 'name:%:%' AND substring(k, 6) NOT IN ('etymology', 'source', 'botanical', 'prefix', 'genitive', 'left', 'right', 'signed'))
+                                 OR k IN ('alt_name', 'int_name', 'official_name', 'loc_name', 'reg_name', 'short_name', 'old_name'))
+                                AND props[k] IS NOT NULL AND props[k] != '']
+                        )
+                END
+        END;
+
+        SELECT
+            map_concat(
+                extract_alt_names(map(['name:en', 'name:fr'], ['Danube', 'Danube'])),
+                extract_alt_names(hstore_to_map('\"alt_name\"=>\"Danubius\",\"name:de\"=>\"Donau\"'))
+            ) AS alt_names;
+        """
+        proc = subprocess.run(
+            ["duckdb", "-dark-mode", "-no-stdin", "-json", "-c", test_query],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        import json
+        rows = json.loads(proc.stdout)
+        self.assertEqual(len(rows), 1)
+        alt_names = rows[0]["alt_names"]
+        self.assertEqual(alt_names.get("en"), "Danube")
+        self.assertEqual(alt_names.get("fr"), "Danube")
+        self.assertEqual(alt_names.get("de"), "Donau")
+        self.assertEqual(alt_names.get("alt_name"), "Danubius")
 
 
 if __name__ == "__main__":
