@@ -86,7 +86,10 @@ To ensure consistent pipeline execution, geographical coverage, and clean Git wo
     - Tests assert that all SQL export templates strictly adhere to Rule 11 (complete `KV_METADATA`), Rule 12 (`INTERLEAVED_READING=YES` and `osm_way_id=yes`), and pipeline Osmium filtering isolation.
 14. **Output Parquet Quality & Completeness Audits (`scripts/validate_parquet.py`):**
     - Every generated GeoParquet dataset must be verified immediately post-conversion using `scripts/validate_parquet.py <files> --fail-on-error`.
-    - Detects silent regression patterns: 0 building ways on address datasets (`way_count == 0` when total > 500), road ID truncation at low IDs, NULL `osm_id` occurrences, and missing Parquet footer metadata keys.
+    - Detects silent regression patterns: 0 building ways on address datasets (`way_count == 0` when total > 500), road ID truncation at low IDs, NULL `osm_id` occurrences, missing Parquet footer metadata keys, and 0 relation memberships on large waterway extracts (`total > 1000 and in_relation_count == 0`, emitted as warning).
+15. **Auxiliary Index Lifecycle & Scratch Directory Isolation Invariant:**
+    - Intermediate index files, auxiliary OPL streams, or temporary lookup tables created prior to layer export (such as `WATERWAYS_RELS_OPL`) MUST be placed in isolated temporary directories (e.g., via `mktemp /tmp/...`) and NEVER inside `DUCKDB_TEMP_DIR` or `GDAL_TEMP_DIR`.
+    - **Rationale:** `export_layer` executes `reset_scratch_dirs` (`rm -rf "${DUCKDB_TEMP_DIR}"/* "${GDAL_TEMP_DIR}"/*`) at the beginning of each layer to guarantee a clean, unspilled scratch volume. Any auxiliary files located inside these scratch directories are wiped immediately before DuckDB executes, causing silent attribute loss (e.g. empty relations index resulting in `relation_id = NULL` and `alt_names = NULL`).
 
 
 
