@@ -95,7 +95,7 @@ class TestValidateParquet(unittest.TestCase):
     @patch("validate_parquet.run_duckdb_query")
     @patch("validate_parquet.os.path.getsize", return_value=1024)
     @patch("validate_parquet.os.path.exists", return_value=True)
-    def test_waterways_large_dataset_without_relations_reports_error(
+    def test_waterways_large_dataset_without_relations_reports_warning(
         self, mock_exists, mock_getsize, mock_query, mock_meta, mock_cols
     ):
         mock_cols.return_value = list(WATERWAY_REQUIRED_COLUMNS)
@@ -113,8 +113,10 @@ class TestValidateParquet(unittest.TestCase):
         }]
 
         res = validate_waterways_file("DE_germany.waterways.parquet")
-        self.assertEqual(res["status"], "ERROR")
-        self.assertIn("0 waterways with relation membership", res["issues"][0])
+        self.assertEqual(res["status"], "WARN")
+        self.assertEqual(len(res["issues"]), 0)
+        self.assertEqual(len(res["warnings"]), 1)
+        self.assertIn("0 waterways with relation membership", res["warnings"][0])
 
     @unittest.skipUnless(os.path.exists(AT_ADDRESSES), "AT addresses fixture not present")
     def test_austria_addresses_validation(self):

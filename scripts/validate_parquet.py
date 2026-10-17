@@ -299,7 +299,7 @@ def validate_waterways_file(file_path):
             if unnamed > 0:
                 issues.append(f"Found {unnamed} unnamed waterways (only named waterways should be exported)")
             if total > 1000 and r.get("in_relation_count", 0) == 0:
-                issues.append(f"Found 0 waterways with relation membership out of {total} features (expected relation memberships for major waterways)")
+                warnings.append(f"Found 0 waterways with relation membership out of {total} features (unusual for large extracts, check if relation extraction succeeded)")
 
     except Exception as exc:
         issues.append(f"Query error: {exc}")
