@@ -88,8 +88,16 @@ To ensure consistent pipeline execution, geographical coverage, and clean Git wo
     - Every generated GeoParquet dataset must be verified immediately post-conversion using `scripts/validate_parquet.py <files> --fail-on-error`.
     - Detects silent regression patterns: 0 building ways on address datasets (`way_count == 0` when total > 500), road ID truncation at low IDs, NULL `osm_id` occurrences, missing Parquet footer metadata keys, and 0 relation memberships on large waterway extracts (`total > 1000 and in_relation_count == 0`, emitted as warning).
 15. **Auxiliary Index Lifecycle & Scratch Directory Isolation Invariant:**
-    - Intermediate index files, auxiliary OPL streams, or temporary lookup tables created prior to layer export (such as `WATERWAYS_RELS_OPL`) MUST be placed in isolated temporary directories (e.g., via `mktemp /tmp/...`) and NEVER inside `DUCKDB_TEMP_DIR` or `GDAL_TEMP_DIR`.
+    - Intermediate index files, auxiliary JSONL/OPL streams, or temporary lookup tables created prior to layer export (such as `WATERWAYS_RELS_JSON`) MUST be placed in isolated temporary directories (e.g., via `mktemp /tmp/...`) and NEVER inside `DUCKDB_TEMP_DIR` or `GDAL_TEMP_DIR`.
     - **Rationale:** `export_layer` executes `reset_scratch_dirs` (`rm -rf "${DUCKDB_TEMP_DIR}"/* "${GDAL_TEMP_DIR}"/*`) at the beginning of each layer to guarantee a clean, unspilled scratch volume. Any auxiliary files located inside these scratch directories are wiped immediately before DuckDB executes, causing silent attribute loss (e.g. empty relations index resulting in `relation_id = NULL` and `alt_names = NULL`).
+16. **Osmium OPL Stream Pre-Indexing & Unicode Code Point Invariant:**
+    - Osmium OPL format (`-f opl`) escapes characters as `%HEX%` based on their **Unicode code point** (e.g. `%20%` space, `%2c%` comma, `%3d%` equals, `%25%` percent, `%122b%` Amharic, `%30ed%` Japanese). It is NOT URL-encoded UTF-8 bytes.
+    - Never attempt to decode OPL escapes in DuckDB SQL using hardcoded `replace()` cascades or SQL regex functions, as DuckDB SQL cannot dynamically translate arbitrary hex code points to characters.
+    - All OPL streams must be pre-indexed via a lightweight streaming Python utility (e.g. `scripts/index_waterway_relations.py`) using `unquote_opl()` (`re.compile(r'%([0-9a-fA-F]{1,6})%')` + `chr(int(cp, 16))`) into clean typed JSONL/Parquet before DuckDB ingestion.
+17. **DuckDB SQL String Literal Escaping & Macro Test Fidelity Invariant:**
+    - In DuckDB `.sql` files, double quotes inside single-quoted strings `'...'` MUST NEVER be escaped with backslashes. Use `'"=>"'`, `'","'`, and `'\"'` (for replacing literal escaped quotes) rather than `'\"=>\"'`.
+    - Unit tests asserting SQL macro behavior must NEVER duplicate SQL macro code as hardcoded Python string literals. Tests must extract the macro definitions directly from the production `.sql` files (`self.sql_content.split(...)`) to prevent divergence between test execution and runtime behavior.
+
 
 
 

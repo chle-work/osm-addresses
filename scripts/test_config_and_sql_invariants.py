@@ -124,20 +124,20 @@ class TestSqlTemplatesMetadata(unittest.TestCase):
             "convert.sh must substitute __OSM_DATA_TIMESTAMP__ placeholder",
         )
 
-    def test_convert_sh_substitutes_waterways_rels_opl(self):
+    def test_convert_sh_substitutes_waterways_rels_json(self):
         content = read_file(CONVERT_SH)
         self.assertIn(
-            "__WATERWAYS_RELS_OPL__",
+            "__WATERWAYS_RELS_JSON__",
             content,
-            "convert.sh must substitute __WATERWAYS_RELS_OPL__ placeholder",
+            "convert.sh must substitute __WATERWAYS_RELS_JSON__ placeholder",
         )
 
-    def test_waterways_rels_opl_not_in_duckdb_temp_dir(self):
+    def test_waterways_rels_json_not_in_duckdb_temp_dir(self):
         content = read_file(CONVERT_SH)
         self.assertNotIn(
-            'WATERWAYS_RELS_OPL="${DUCKDB_TEMP_DIR}/',
+            'WATERWAYS_RELS_JSON="${DUCKDB_TEMP_DIR}/',
             content,
-            "WATERWAYS_RELS_OPL must not be placed in DUCKDB_TEMP_DIR because reset_scratch_dirs wipes it",
+            "WATERWAYS_RELS_JSON must not be placed in DUCKDB_TEMP_DIR because reset_scratch_dirs wipes it",
         )
 
 
@@ -357,7 +357,7 @@ class TestWaterwaysSqlInvariants(unittest.TestCase):
             )
 
     def test_waterways_sql_defines_required_macros(self):
-        for macro_name in ("hstore_to_map", "extract_alt_names", "opl_decode", "build_way_tags"):
+        for macro_name in ("hstore_to_map", "extract_alt_names", "build_way_tags"):
             self.assertIn(
                 f"MACRO {macro_name}",
                 self.sql_content,
@@ -371,9 +371,9 @@ class TestWaterwaysSqlInvariants(unittest.TestCase):
             "export_waterways.sql must build and join waterway_rel_members",
         )
         self.assertIn(
-            "__WATERWAYS_RELS_OPL__",
+            "__WATERWAYS_RELS_JSON__",
             self.sql_content,
-            "export_waterways.sql must reference __WATERWAYS_RELS_OPL__ placeholder",
+            "export_waterways.sql must reference __WATERWAYS_RELS_JSON__ placeholder",
         )
 
     def test_waterways_macros_duckdb_execution(self):
@@ -383,46 +383,23 @@ class TestWaterwaysSqlInvariants(unittest.TestCase):
         if not shutil.which("duckdb"):
             self.skipTest("duckdb CLI not available on host")
 
-        test_query = """
-        CREATE OR REPLACE MACRO hstore_to_map(hstore_str) AS
-        CASE
-            WHEN hstore_str IS NULL OR trim(hstore_str) = '' THEN CAST(NULL AS MAP(VARCHAR, VARCHAR))
-            ELSE
-                map(
-                    [replace(split_part(p, '\"=>\"', 1), '\\\"', '\"') for p in string_split(trim(hstore_str, '\"'), '\",\"')],
-                    [replace(split_part(p, '\"=>\"', 2), '\\\"', '\"') for p in string_split(trim(hstore_str, '\"'), '\",\"')]
-                )
-        END;
+        # Extract macro definitions directly from export_waterways.sql
+        macro_sql_chunk = self.sql_content.split("CREATE TEMP TABLE")[0]
+        # Strip LOAD spatial so tests run without spatial extension installed on host
+        macro_sql = "\n".join(
+            line for line in macro_sql_chunk.splitlines()
+            if not line.strip().startswith("LOAD spatial")
+        )
 
-        CREATE OR REPLACE MACRO extract_alt_names(props) AS
-        CASE
-            WHEN props IS NULL THEN CAST(NULL AS MAP(VARCHAR, VARCHAR))
-            ELSE
-                CASE 
-                    WHEN len([k for k in map_keys(props)
-                              if ((k LIKE 'name:%' AND k NOT LIKE 'name:%:%' AND substring(k, 6) NOT IN ('etymology', 'source', 'botanical', 'prefix', 'genitive', 'left', 'right', 'signed'))
-                                  OR k IN ('alt_name', 'int_name', 'official_name', 'loc_name', 'reg_name', 'short_name', 'old_name'))
-                                 AND props[k] IS NOT NULL AND props[k] != '']) = 0
-                    THEN CAST(NULL AS MAP(VARCHAR, VARCHAR))
-                    ELSE
-                        map(
-                            [CASE WHEN k LIKE 'name:%' THEN substring(k, 6) ELSE k END for k in map_keys(props)
-                             if ((k LIKE 'name:%' AND k NOT LIKE 'name:%:%' AND substring(k, 6) NOT IN ('etymology', 'source', 'botanical', 'prefix', 'genitive', 'left', 'right', 'signed'))
-                                 OR k IN ('alt_name', 'int_name', 'official_name', 'loc_name', 'reg_name', 'short_name', 'old_name'))
-                                AND props[k] IS NOT NULL AND props[k] != ''],
-                            [props[k] for k in map_keys(props)
-                             if ((k LIKE 'name:%' AND k NOT LIKE 'name:%:%' AND substring(k, 6) NOT IN ('etymology', 'source', 'botanical', 'prefix', 'genitive', 'left', 'right', 'signed'))
-                                 OR k IN ('alt_name', 'int_name', 'official_name', 'loc_name', 'reg_name', 'short_name', 'old_name'))
-                                AND props[k] IS NOT NULL AND props[k] != '']
-                        )
-                END
-        END;
+        test_query = f"""
+        {macro_sql}
 
         SELECT
             map_concat(
                 extract_alt_names(map(['name:en', 'name:fr'], ['Danube', 'Danube'])),
-                extract_alt_names(hstore_to_map('\"alt_name\"=>\"Danubius\",\"name:de\"=>\"Donau\"'))
-            ) AS alt_names;
+                extract_alt_names(hstore_to_map('"alt_name"=>"Danubius","name:de"=>"Donau"'))
+            ) AS alt_names,
+            hstore_to_map('"seasonal"=>"yes","width"=>"3"') AS way_tags;
         """
         proc = subprocess.run(
             ["duckdb", "-dark-mode", "-no-stdin", "-json", "-c", test_query],
@@ -433,11 +410,53 @@ class TestWaterwaysSqlInvariants(unittest.TestCase):
         import json
         rows = json.loads(proc.stdout)
         self.assertEqual(len(rows), 1)
-        alt_names = rows[0]["alt_names"]
+        row = rows[0]
+        alt_names = row["alt_names"]
         self.assertEqual(alt_names.get("en"), "Danube")
         self.assertEqual(alt_names.get("fr"), "Danube")
         self.assertEqual(alt_names.get("de"), "Donau")
         self.assertEqual(alt_names.get("alt_name"), "Danubius")
+
+        # Regression assertions for HSTORE quote splitting
+        way_tags = row["way_tags"]
+        self.assertEqual(way_tags.get("seasonal"), "yes")
+        self.assertEqual(way_tags.get("width"), "3")
+        self.assertNotIn('seasonal"=>"yes', way_tags)
+
+    def test_index_waterway_relations_parser(self):
+        import sys
+        import io
+        import json
+        import subprocess
+
+        # Simulated Osmium OPL output including Unicode code points (Amharic ራይን ወን, German, etc.)
+        mock_opl = (
+            "r123924 v1 dV c1 t1 i1 u1 "
+            "Tname=Rhein,name:am=%122b%%12ed%%1295%%20%%12c8%%1295%,name:en=Rhine,name:de=Rhein%2c%%20%Hauptfluss "
+            "Mw1524365679@main_stream,w1417928672@\n"
+            "r999 v1 dV c1 t1 i1 u1 Tname=SubStream Mw1524365679@side_stream\n"
+        )
+        script_path = os.path.join(REPO_ROOT, "scripts", "index_waterway_relations.py")
+        proc = subprocess.run(
+            [sys.executable, script_path],
+            input=mock_opl,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        lines = [json.loads(line) for line in proc.stdout.strip().splitlines()]
+        self.assertEqual(len(lines), 2)
+
+        # Way 1524365679 had two candidate relations (123924 with main_stream, 999 with side_stream)
+        # main_stream must win deterministically:
+        by_way = {item["way_id"]: item for item in lines}
+        way_entry = by_way[1524365679]
+        self.assertEqual(way_entry["relation_id"], 123924)
+        self.assertEqual(way_entry["member_role"], "main_stream")
+        self.assertEqual(way_entry["rel_tags"]["name"], "Rhein")
+        self.assertEqual(way_entry["rel_tags"]["name:en"], "Rhine")
+        self.assertEqual(way_entry["rel_tags"]["name:am"], "ራይን ወን")
+        self.assertEqual(way_entry["rel_tags"]["name:de"], "Rhein, Hauptfluss")
 
 
 if __name__ == "__main__":

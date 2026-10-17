@@ -1,5 +1,5 @@
 -- DuckDB SQL: OSM PBF -> GeoParquet (linear waterways export)
--- Placeholder tokens __INPUT_PBF__, __OUTPUT_PARQUET__, __OSMCONF__, __COUNTRY_CODE__, __EXPORTED_AT__, __OSM_DATA_TIMESTAMP__, __WATERWAYS_RELS_OPL__
+-- Placeholder tokens __INPUT_PBF__, __OUTPUT_PARQUET__, __OSMCONF__, __COUNTRY_CODE__, __EXPORTED_AT__, __OSM_DATA_TIMESTAMP__, __WATERWAYS_RELS_JSON__
 -- are substituted by convert.sh using sed before the script is piped to duckdb stdin.
 
 LOAD spatial;
@@ -10,14 +10,10 @@ CASE
     WHEN hstore_str IS NULL OR trim(hstore_str) = '' THEN CAST(NULL AS MAP(VARCHAR, VARCHAR))
     ELSE
         map(
-            [replace(split_part(p, '\"=>\"', 1), '\\\"', '\"') for p in string_split(trim(hstore_str, '\"'), '\",\"')],
-            [replace(split_part(p, '\"=>\"', 2), '\\\"', '\"') for p in string_split(trim(hstore_str, '\"'), '\",\"')]
+            [replace(split_part(p, '"=>"', 1), '\"', '"') for p in string_split(trim(hstore_str, '"'), '","')],
+            [replace(split_part(p, '"=>"', 2), '\"', '"') for p in string_split(trim(hstore_str, '"'), '","')]
         )
 END;
-
--- Decode Osmium OPL percent-encoded values (%20 -> ' ', %2C -> ',', %3D -> '=', %25 -> '%')
-CREATE OR REPLACE MACRO opl_decode(s) AS
-replace(replace(replace(replace(s, '%20', ' '), '%2C', ','), '%3D', '='), '%25', '%');
 
 -- Extract localized & alternative names into MAP(VARCHAR, VARCHAR) ('en', 'de', 'alt_name', etc.)
 CREATE OR REPLACE MACRO extract_alt_names(props) AS
@@ -54,79 +50,22 @@ map_concat(
     hstore_to_map(other_tags_str)
 );
 
--- Build relation membership index from extracted OPL relations file
+-- Build relation membership index from pre-indexed JSONL relations stream
 CREATE TEMP TABLE IF NOT EXISTS waterway_rel_members AS
-WITH rel_lines AS (
-    SELECT line
-    FROM read_csv(
-        '__WATERWAYS_RELS_OPL__',
-        columns={'line': 'VARCHAR'},
-        quote='',
-        escape='',
-        delim='\n',
-        auto_detect=false
-    )
-    WHERE line LIKE 'r%'
-),
-parsed_rels AS (
-    SELECT
-        CAST(regexp_extract(line, '^r([0-9]+)', 1) AS BIGINT) AS relation_id,
-        regexp_extract(line, ' T([^ ]*)', 1) AS raw_tags,
-        regexp_extract(line, ' M([^ ]*)', 1) AS raw_members
-    FROM rel_lines
-),
-rel_tags_parsed AS (
-    SELECT
-        relation_id,
-        raw_members,
-        CASE
-            WHEN raw_tags = '' THEN CAST(NULL AS MAP(VARCHAR, VARCHAR))
-            ELSE map(
-                [split_part(p, '=', 1) for p in string_split(raw_tags, ',')],
-                [opl_decode(split_part(p, '=', 2)) for p in string_split(raw_tags, ',')]
-            )
-        END AS rel_tags
-    FROM parsed_rels
-),
-members_unnested AS (
-    SELECT
-        relation_id,
-        rel_tags,
-        unnest(string_split(raw_members, ',')) AS member_str
-    FROM rel_tags_parsed
-    WHERE raw_members != ''
-),
-members_parsed AS (
-    SELECT
-        relation_id,
-        rel_tags,
-        CAST(regexp_extract(member_str, '^w([0-9]+)', 1) AS BIGINT) AS way_id,
-        opl_decode(NULLIF(split_part(member_str, '@', 2), '')) AS member_role
-    FROM members_unnested
-    WHERE member_str LIKE 'w%'
-),
-ranked_members AS (
-    SELECT
-        way_id,
-        relation_id,
-        member_role,
-        rel_tags,
-        ROW_NUMBER() OVER (
-            PARTITION BY way_id
-            ORDER BY
-                CASE
-                    WHEN member_role = 'main_stream' THEN 1
-                    WHEN member_role = 'side_stream' THEN 2
-                    WHEN member_role IS NOT NULL AND member_role != '' THEN 3
-                    ELSE 4
-                END,
-                relation_id
-        ) AS rank
-    FROM members_parsed
-)
-SELECT way_id, relation_id, member_role, rel_tags
-FROM ranked_members
-WHERE rank = 1;
+SELECT
+    CAST(way_id AS BIGINT) AS way_id,
+    CAST(relation_id AS BIGINT) AS relation_id,
+    member_role,
+    rel_tags
+FROM read_json(
+    '__WATERWAYS_RELS_JSON__',
+    columns={
+        'way_id': 'BIGINT',
+        'relation_id': 'BIGINT',
+        'member_role': 'VARCHAR',
+        'rel_tags': 'MAP(VARCHAR, VARCHAR)'
+    }
+);
 
 COPY (
     SELECT

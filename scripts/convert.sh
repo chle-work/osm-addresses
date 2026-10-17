@@ -303,13 +303,13 @@ export_layer() {
 
     reset_scratch_dirs
 
-    local DEFAULT_EMPTY_OPL=""
-    local WATERWAYS_RELS_OPL_ARG=""
-    if [ -n "${WATERWAYS_RELS_OPL:-}" ] && [ -f "$WATERWAYS_RELS_OPL" ]; then
-        WATERWAYS_RELS_OPL_ARG="$WATERWAYS_RELS_OPL"
+    local DEFAULT_EMPTY_JSON=""
+    local WATERWAYS_RELS_JSON_ARG=""
+    if [ -n "${WATERWAYS_RELS_JSON:-}" ] && [ -f "$WATERWAYS_RELS_JSON" ]; then
+        WATERWAYS_RELS_JSON_ARG="$WATERWAYS_RELS_JSON"
     else
-        DEFAULT_EMPTY_OPL=$(mktemp /tmp/waterways_empty_XXXXXX.opl)
-        WATERWAYS_RELS_OPL_ARG="$DEFAULT_EMPTY_OPL"
+        DEFAULT_EMPTY_JSON=$(mktemp /tmp/waterways_empty_XXXXXX.jsonl)
+        WATERWAYS_RELS_JSON_ARG="$DEFAULT_EMPTY_JSON"
     fi
 
     echo "[INFO] Exporting ${LAYER_NAME} (${LAYER_PBF}) -> ${TARGET_PARQUET}..."
@@ -322,13 +322,13 @@ export_layer() {
         -e "s|__EXPORTED_AT__|${EXPORTED_AT}|g" \
         -e "s|__OSM_DATA_TIMESTAMP__|${OSM_DATA_TIMESTAMP}|g" \
         -e "s|__OSMCONF__|${OSMCONF}|g" \
-        -e "s|__WATERWAYS_RELS_OPL__|${WATERWAYS_RELS_OPL_ARG}|g" \
+        -e "s|__WATERWAYS_RELS_JSON__|${WATERWAYS_RELS_JSON_ARG}|g" \
         "$SQL_TEMPLATE" >> "$TMP_SQL"
 
     duckdb < "$TMP_SQL"
     rm -f "$TMP_SQL"
-    if [ -n "$DEFAULT_EMPTY_OPL" ]; then
-        rm -f "$DEFAULT_EMPTY_OPL"
+    if [ -n "$DEFAULT_EMPTY_JSON" ]; then
+        rm -f "$DEFAULT_EMPTY_JSON"
     fi
 
     if [ ! -f "$TARGET_PARQUET" ]; then
@@ -364,16 +364,17 @@ export_layer "$SQL_ENTRANCES" "$ENTRANCES_PBF" "$ENTRANCES_PARQUET" "entrances"
 
 # 4. Export linear waterways (rivers, canals, streams)
 if [ -n "${WATERWAYS_PBF:-}" ] && [ -f "$WATERWAYS_PBF" ]; then
-    WATERWAYS_RELS_OPL=$(mktemp /tmp/waterways_relations_XXXXXX.opl)
+    WATERWAYS_RELS_JSON=$(mktemp /tmp/waterways_relations_XXXXXX.jsonl)
     if command -v osmium >/dev/null 2>&1; then
-        echo "[INFO] Extracting waterway relations into lightweight OPL index..."
-        osmium tags-filter "$WATERWAYS_PBF" r/waterway=river,canal,stream r/type=waterway -o "$WATERWAYS_RELS_OPL" -f opl --overwrite 2>/dev/null || touch "$WATERWAYS_RELS_OPL"
+        echo "[INFO] Extracting & pre-indexing waterway relations into lightweight JSONL stream..."
+        osmium tags-filter "$WATERWAYS_PBF" r/waterway=river,canal,stream r/type=waterway -o - -f opl 2>/dev/null \
+            | python3 "${SCRIPT_DIR}/index_waterway_relations.py" > "$WATERWAYS_RELS_JSON" || touch "$WATERWAYS_RELS_JSON"
     else
-        touch "$WATERWAYS_RELS_OPL"
+        touch "$WATERWAYS_RELS_JSON"
     fi
     export_layer "$SQL_WATERWAYS" "$WATERWAYS_PBF" "$WATERWAYS_PARQUET" "waterways"
-    rm -f "$WATERWAYS_RELS_OPL"
-    unset WATERWAYS_RELS_OPL
+    rm -f "$WATERWAYS_RELS_JSON"
+    unset WATERWAYS_RELS_JSON
 fi
 
 reset_scratch_dirs
