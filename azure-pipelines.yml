@@ -1170,41 +1170,17 @@ stages:
   dependsOn: convert
   condition: and(succeeded('convert'), ${{ eq(parameters.publishGitHubRelease, true) }})
   jobs:
-  - job: release
-    displayName: 'Create GitHub Release with GeoParquet Assets'
-    timeoutInMinutes: 360
+  # Job 1: Initialize release record with metadata and release notes
+  - job: init_release
+    displayName: 'Initialize GitHub Release'
     pool:
       vmImage: 'ubuntu-latest'
     steps:
     - checkout: self
 
     - task: Bash@3
-      displayName: 'Reclaim runner host disk space'
-      inputs:
-        targetType: 'inline'
-        script: |
-          echo "[INFO] Disk space before cleanup:"
-          df -h /
-          sudo rm -rf \
-            /usr/share/dotnet \
-            /usr/local/lib/android \
-            /opt/ghc \
-            /usr/local/share/boost \
-            /opt/hostedtoolcache \
-            2>/dev/null || true
-          echo "[INFO] Disk space after cleanup:"
-          df -h /
-
-    # Download build artifacts from current pipeline run
-    - task: DownloadPipelineArtifact@2
-      displayName: 'Download per-region GeoParquet artifacts'
-      inputs:
-        buildType: 'current'
-        itemPattern: 'osm-parquet-*/**'
-        targetPath: '$(System.DefaultWorkingDirectory)/downloads'
-
-    - task: Bash@3
-      displayName: 'Prepare Release Assets & Summary Notes'
+      name: init_vars
+      displayName: 'Resolve Release Metadata & Generate Notes'
       env:
         PARAM_RELEASE_TAG: '${{ parameters.releaseTag }}'
         PARAM_RELEASE_TITLE: '${{ parameters.releaseTitle }}'
@@ -1212,30 +1188,7 @@ stages:
         targetType: 'inline'
         script: |
           set -e
-          mkdir -p release-assets
 
-          # Move already publishable per-region GeoParquet files and clean up the
-          # temporary download directory. Oversized files are partitioned in their
-          # individual build jobs before they are published as artifacts.
-          find downloads -name "*.parquet" -exec mv {} release-assets/ \;
-          rm -rf downloads
-
-          PARQUET_COUNT=$(find release-assets -name "*.parquet" | wc -l)
-          ADDRESS_COUNT=$(find release-assets -name "*.addresses*.parquet" | wc -l)
-          ROAD_COUNT=$(find release-assets -name "*.roads*.parquet" | wc -l)
-          ENTRANCE_COUNT=$(find release-assets -name "*.entrances*.parquet" | wc -l)
-          WATERWAY_COUNT=$(find release-assets -name "*.waterways*.parquet" | wc -l)
-
-          if [ "$PARQUET_COUNT" -eq 0 ]; then
-            echo "****************************************************************"
-            echo " ERROR: No GeoParquet (.parquet) files were found in downloaded artifacts!"
-            echo "****************************************************************"
-            exit 1
-          fi
-
-          echo "[INFO] Found $PARQUET_COUNT GeoParquet file(s) for release ($ADDRESS_COUNT addresses, $ROAD_COUNT roads, $ENTRANCE_COUNT entrances, $WATERWAY_COUNT waterways)."
-
-          # Resolve Release Tag and Title dynamically
           RELEASE_TAG="$PARAM_RELEASE_TAG"
           if [ "$RELEASE_TAG" = "auto" ] || [ -z "$RELEASE_TAG" ]; then
             RELEASE_TAG="$(Build.BuildNumber)"
@@ -1249,10 +1202,9 @@ stages:
           echo "[INFO] Release Tag  : $RELEASE_TAG"
           echo "[INFO] Release Title: $RELEASE_TITLE"
 
-          echo "##vso[task.setvariable variable=RELEASE_TAG]$RELEASE_TAG"
-          echo "##vso[task.setvariable variable=RELEASE_TITLE]$RELEASE_TITLE"
+          echo "##vso[task.setvariable variable=RELEASE_TAG;isOutput=true]$RELEASE_TAG"
+          echo "##vso[task.setvariable variable=RELEASE_TITLE;isOutput=true]$RELEASE_TITLE"
 
-          # Generate Release Notes Markdown
           cat <<EOF > release-notes.md
           ## OSM GeoParquet Release ($RELEASE_TAG)
 
@@ -1309,36 +1261,339 @@ stages:
           | **\`geometry\`** | \`GEOMETRY\` | LineString geometry (WGS84 EPSG:4326, Hilbert-sorted) |
 
           ### Download Assets
-          - **\`<CC>_<region>.addresses.parquet\`**: Address points ($ADDRESS_COUNT files)
-          - **\`<CC>_<region>.roads.parquet\`**: Drivable road centerlines ($ROAD_COUNT files, partitioned into \`.part<N>.parquet\` where raw size exceeds GitHub's 2 GiB limit)
-          - **\`<CC>_<region>.entrances.parquet\`**: Entrance nodes & gates ($ENTRANCE_COUNT files)
-          - **\`<CC>_<region>.waterways.parquet\`**: Linear waterways ($WATERWAY_COUNT files)
-
-          Total GeoParquet assets in this release: **$PARQUET_COUNT**.
+          Over 700 GeoParquet datasets covering 169 countries and territories worldwide:
+          - **\`<CC>_<region>.addresses.parquet\`**: Address points
+          - **\`<CC>_<region>.roads.parquet\`**: Drivable road centerlines (partitioned into \`.part<N>.parquet\` where raw size exceeds GitHub's 2 GiB limit)
+          - **\`<CC>_<region>.entrances.parquet\`**: Entrance nodes & gates
+          - **\`<CC>_<region>.waterways.parquet\`**: Linear waterways
 
           ---
           *Built with DuckDB spatial extension and ZSTD compression. Spatially indexed using Hilbert curve ordering.*
           EOF
 
-          ls -lh release-assets/
           cat release-notes.md
 
     - task: GitHubRelease@1
-      displayName: 'Create GitHub Release'
+      displayName: 'Create Initial GitHub Release'
       inputs:
         gitHubConnection: '3c34db30-d57b-42e2-a970-857bd932c6c0'
         repositoryName: '$(Build.Repository.Name)'
         action: 'create'
         target: '$(Build.SourceVersion)'
         tagSource: 'userSpecifiedTag'
-        tag: '$(RELEASE_TAG)'
-        title: '$(RELEASE_TITLE)'
+        tag: '$(init_vars.RELEASE_TAG)'
+        title: '$(init_vars.RELEASE_TITLE)'
         releaseNotesSource: 'filePath'
         releaseNotesFilePath: '$(System.DefaultWorkingDirectory)/release-notes.md'
-        assets: |
-          $(System.DefaultWorkingDirectory)/release-assets/*.parquet
-        assetUploadMode: 'delete'
+        assetUploadMode: 'replace'
         isDraft: ${{ parameters.isDraft }}
         isPreRelease: ${{ parameters.isPreRelease }}
+
+  # Job 2: Upload assets partitioned by geographical continent/region
+  - job: upload_assets
+    displayName: 'Upload Assets'
+    dependsOn: init_release
+    condition: succeeded('init_release')
+    timeoutInMinutes: 360
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      maxParallel: 6
+      matrix:
+        europe:
+          REGION_GROUP: 'Europe'
+          ARTIFACT_PATTERNS: |
+            osm-parquet-AD-andorra/**
+            osm-parquet-AL-albania/**
+            osm-parquet-AT-austria/**
+            osm-parquet-BA-bosnia-herzegovina/**
+            osm-parquet-BE-belgium/**
+            osm-parquet-BG-bulgaria/**
+            osm-parquet-BY-belarus/**
+            osm-parquet-CH-switzerland/**
+            osm-parquet-CY-cyprus/**
+            osm-parquet-CZ-czech-republic/**
+            osm-parquet-DE-germany/**
+            osm-parquet-DK-denmark/**
+            osm-parquet-EE-estonia/**
+            osm-parquet-ES-spain/**
+            osm-parquet-FI-finland/**
+            osm-parquet-FO-faroe-islands/**
+            osm-parquet-FR-france/**
+            osm-parquet-GB-great-britain/**
+            osm-parquet-GE-georgia/**
+            osm-parquet-GF-guyane/**
+            osm-parquet-GP-guadeloupe/**
+            osm-parquet-GR-greece/**
+            osm-parquet-HR-croatia/**
+            osm-parquet-HU-hungary/**
+            osm-parquet-IE-ireland-and-northern-ireland/**
+            osm-parquet-IM-isle-of-man/**
+            osm-parquet-IS-iceland/**
+            osm-parquet-IT-italy/**
+            osm-parquet-LI-liechtenstein/**
+            osm-parquet-LT-lithuania/**
+            osm-parquet-LU-luxembourg/**
+            osm-parquet-LV-latvia/**
+            osm-parquet-MC-monaco/**
+            osm-parquet-MD-moldova/**
+            osm-parquet-ME-montenegro/**
+            osm-parquet-MK-macedonia/**
+            osm-parquet-MQ-martinique/**
+            osm-parquet-MT-malta/**
+            osm-parquet-NL-netherlands/**
+            osm-parquet-NO-norway/**
+            osm-parquet-PL-poland/**
+            osm-parquet-PT-azores/**
+            osm-parquet-PT-portugal/**
+            osm-parquet-RE-reunion/**
+            osm-parquet-RO-romania/**
+            osm-parquet-RS-serbia/**
+            osm-parquet-SE-sweden/**
+            osm-parquet-SI-slovenia/**
+            osm-parquet-SK-slovakia/**
+            osm-parquet-TR-turkey/**
+            osm-parquet-UA-ukraine/**
+            osm-parquet-XK-kosovo/**
+            osm-parquet-YT-mayotte/**
+        north_america:
+          REGION_GROUP: 'North America'
+          ARTIFACT_PATTERNS: |
+            osm-parquet-CA-canada/**
+            osm-parquet-GL-greenland/**
+            osm-parquet-MX-mexico/**
+            osm-parquet-US-us/**
+        south_central_america:
+          REGION_GROUP: 'South & Central America'
+          ARTIFACT_PATTERNS: |
+            osm-parquet-AR-argentina/**
+            osm-parquet-BO-bolivia/**
+            osm-parquet-BR-brazil/**
+            osm-parquet-BS-bahamas/**
+            osm-parquet-BZ-belize/**
+            osm-parquet-CL-chile/**
+            osm-parquet-CO-colombia/**
+            osm-parquet-CU-cuba/**
+            osm-parquet-EC-ecuador/**
+            osm-parquet-GT-guatemala/**
+            osm-parquet-GY-guyana/**
+            osm-parquet-HT-haiti-and-domrep/**
+            osm-parquet-JM-jamaica/**
+            osm-parquet-NI-nicaragua/**
+            osm-parquet-PE-peru/**
+            osm-parquet-PY-paraguay/**
+            osm-parquet-SR-suriname/**
+            osm-parquet-UY-uruguay/**
+            osm-parquet-VE-venezuela/**
+        asia:
+          REGION_GROUP: 'Asia'
+          ARTIFACT_PATTERNS: |
+            osm-parquet-AE-gcc-states/**
+            osm-parquet-AF-afghanistan/**
+            osm-parquet-AM-armenia/**
+            osm-parquet-AZ-azerbaijan/**
+            osm-parquet-BD-bangladesh/**
+            osm-parquet-BT-bhutan/**
+            osm-parquet-CN-china/**
+            osm-parquet-ID-indonesia/**
+            osm-parquet-IL-israel-and-palestine/**
+            osm-parquet-IN-india/**
+            osm-parquet-IQ-iraq/**
+            osm-parquet-IR-iran/**
+            osm-parquet-JO-jordan/**
+            osm-parquet-JP-japan/**
+            osm-parquet-KG-kyrgyzstan/**
+            osm-parquet-KH-cambodia/**
+            osm-parquet-KP-north-korea/**
+            osm-parquet-KR-south-korea/**
+            osm-parquet-KZ-kazakhstan/**
+            osm-parquet-LA-laos/**
+            osm-parquet-LB-lebanon/**
+            osm-parquet-LK-sri-lanka/**
+            osm-parquet-MM-myanmar/**
+            osm-parquet-MN-mongolia/**
+            osm-parquet-MV-maldives/**
+            osm-parquet-MY-malaysia-singapore-brunei/**
+            osm-parquet-NP-nepal/**
+            osm-parquet-PH-philippines/**
+            osm-parquet-PK-pakistan/**
+            osm-parquet-SY-syria/**
+            osm-parquet-TH-thailand/**
+            osm-parquet-TJ-tajikistan/**
+            osm-parquet-TM-turkmenistan/**
+            osm-parquet-TW-taiwan/**
+            osm-parquet-UZ-uzbekistan/**
+            osm-parquet-VN-vietnam/**
+            osm-parquet-YE-yemen/**
+        africa:
+          REGION_GROUP: 'Africa'
+          ARTIFACT_PATTERNS: |
+            osm-parquet-AO-angola/**
+            osm-parquet-BF-burkina-faso/**
+            osm-parquet-BI-burundi/**
+            osm-parquet-BJ-benin/**
+            osm-parquet-BW-botswana/**
+            osm-parquet-CD-congo-democratic-republic/**
+            osm-parquet-CF-central-african-republic/**
+            osm-parquet-CG-congo-brazzaville/**
+            osm-parquet-CI-ivory-coast/**
+            osm-parquet-CM-cameroon/**
+            osm-parquet-CV-cape-verde/**
+            osm-parquet-DJ-djibouti/**
+            osm-parquet-DZ-algeria/**
+            osm-parquet-EG-egypt/**
+            osm-parquet-ER-eritrea/**
+            osm-parquet-ES-CN-canary-islands/**
+            osm-parquet-ET-ethiopia/**
+            osm-parquet-GA-gabon/**
+            osm-parquet-GH-ghana/**
+            osm-parquet-GN-guinea/**
+            osm-parquet-GQ-equatorial-guinea/**
+            osm-parquet-GW-guinea-bissau/**
+            osm-parquet-KE-kenya/**
+            osm-parquet-KM-comores/**
+            osm-parquet-LR-liberia/**
+            osm-parquet-LS-lesotho/**
+            osm-parquet-LY-libya/**
+            osm-parquet-MA-morocco/**
+            osm-parquet-MG-madagascar/**
+            osm-parquet-ML-mali/**
+            osm-parquet-MR-mauritania/**
+            osm-parquet-MU-mauritius/**
+            osm-parquet-MW-malawi/**
+            osm-parquet-MZ-mozambique/**
+            osm-parquet-NA-namibia/**
+            osm-parquet-NE-niger/**
+            osm-parquet-NG-nigeria/**
+            osm-parquet-RW-rwanda/**
+            osm-parquet-SC-seychelles/**
+            osm-parquet-SD-sudan/**
+            osm-parquet-SH-saint-helena-ascension-and-tristan-da-cunha/**
+            osm-parquet-SL-sierra-leone/**
+            osm-parquet-SN-senegal-and-gambia/**
+            osm-parquet-SO-somalia/**
+            osm-parquet-SS-south-sudan/**
+            osm-parquet-ST-sao-tome-and-principe/**
+            osm-parquet-SZ-swaziland/**
+            osm-parquet-TD-chad/**
+            osm-parquet-TG-togo/**
+            osm-parquet-TN-tunisia/**
+            osm-parquet-TZ-tanzania/**
+            osm-parquet-UG-uganda/**
+            osm-parquet-ZA-south-africa/**
+            osm-parquet-ZM-zambia/**
+            osm-parquet-ZW-zimbabwe/**
+        oceania_russia:
+          REGION_GROUP: 'Oceania & Russia'
+          ARTIFACT_PATTERNS: |
+            osm-parquet-AU-australia/**
+            osm-parquet-FJ-fiji/**
+            osm-parquet-NC-new-caledonia/**
+            osm-parquet-NZ-new-zealand/**
+            osm-parquet-PF-polynesie-francaise/**
+            osm-parquet-PG-papua-new-guinea/**
+            osm-parquet-RU-russia/**
+
+    steps:
+    - checkout: none
+
+    - task: Bash@3
+      displayName: 'Reclaim runner host disk space'
+      inputs:
+        targetType: 'inline'
+        script: |
+          echo "[INFO] Disk space before cleanup:"
+          df -h /
+          sudo systemctl stop docker 2>/dev/null || true
+          sudo rm -rf \
+            /var/lib/docker \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/local/share/boost \
+            /opt/hostedtoolcache \
+            /usr/share/swift \
+            /usr/lib/jvm \
+            /usr/local/julia \
+            /usr/share/miniconda \
+            /usr/local/share/powershell \
+            /opt/microsoft/powershell \
+            /usr/local/share/vcpkg \
+            /usr/local/share/chromium \
+            /usr/share/google-chrome \
+            /opt/google/chrome \
+            /usr/share/firefox \
+            2>/dev/null || true
+          sudo apt-get clean 2>/dev/null || true
+          sudo rm -rf /var/cache/apt/archives /var/lib/apt/lists/* 2>/dev/null || true
+          echo "[INFO] Disk space after cleanup:"
+          df -h /
+
+    # Download build artifacts from current pipeline run for this continent
+    - task: DownloadPipelineArtifact@2
+      displayName: 'Download GeoParquet artifacts ($(REGION_GROUP))'
+      inputs:
+        buildType: 'current'
+        itemPattern: |
+          $(ARTIFACT_PATTERNS)
+        targetPath: '$(System.DefaultWorkingDirectory)/downloads'
+
+    - task: Bash@3
+      displayName: 'Prepare Release Assets ($(REGION_GROUP))'
+      env:
+        PARAM_RELEASE_TAG: '${{ parameters.releaseTag }}'
+        UPSTREAM_RELEASE_TAG: '$[ dependencies.init_release.outputs[''init_vars.RELEASE_TAG''] ]'
+      inputs:
+        targetType: 'inline'
+        script: |
+          set -e
+          mkdir -p release-assets
+
+          find downloads -name "*.parquet" -exec mv {} release-assets/ \;
+          rm -rf downloads
+
+          PARQUET_COUNT=$(find release-assets -name "*.parquet" | wc -l)
+          if [ "$PARQUET_COUNT" -eq 0 ]; then
+            echo "[WARN] No GeoParquet files found for region group $(REGION_GROUP)."
+          else
+            echo "[INFO] Found $PARQUET_COUNT GeoParquet file(s) for region group $(REGION_GROUP)."
+            ls -lh release-assets/
+          fi
+
+          # Resolve tag reliably
+          TARGET_TAG="$UPSTREAM_RELEASE_TAG"
+          if [ -z "$TARGET_TAG" ] || [ "$TARGET_TAG" = "auto" ] || [ "$TARGET_TAG" = "null" ]; then
+            TARGET_TAG="$PARAM_RELEASE_TAG"
+          fi
+          if [ -z "$TARGET_TAG" ] || [ "$TARGET_TAG" = "auto" ]; then
+            TARGET_TAG="$(Build.BuildNumber)"
+          fi
+
+          echo "[INFO] Using Release Tag: $TARGET_TAG"
+          echo "##vso[task.setvariable variable=RESOLVED_TAG]$TARGET_TAG"
+
+    - task: GitHubRelease@1
+      displayName: 'Upload Assets to GitHub Release ($(REGION_GROUP))'
+      inputs:
+        gitHubConnection: '3c34db30-d57b-42e2-a970-857bd932c6c0'
+        repositoryName: '$(Build.Repository.Name)'
+        action: 'edit'
+        target: '$(Build.SourceVersion)'
+        tagSource: 'userSpecifiedTag'
+        tag: '$(RESOLVED_TAG)'
+        assets: |
+          $(System.DefaultWorkingDirectory)/release-assets/*.parquet
+        assetUploadMode: 'replace'
+        isDraft: ${{ parameters.isDraft }}
+        isPreRelease: ${{ parameters.isPreRelease }}
+
+    - task: Bash@3
+      displayName: 'Cleanup workspace'
+      condition: always()
+      inputs:
+        targetType: 'inline'
+        script: |
+          rm -rf $(System.DefaultWorkingDirectory)/*
 
 

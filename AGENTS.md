@@ -23,7 +23,7 @@ To ensure consistent pipeline execution, geographical coverage, and clean Git wo
    - 169 region matrix definitions following Geofabrik hierarchy across 7 continents.
    - Includes single-threaded `warmup` stage that verifies image availability: pulls from `ghcr.io` (primary) with 3 retries, then falls back to `mirror.gcr.io` if GHCR is unavailable. Fails explicitly if both registries fail.
    - Publishes individual per-region GeoParquet artifacts (`addresses-parquet-$(CC)-$(REGION)`) and pre-filtered address PBF artifacts (`addresses-pbf-$(CC)-$(REGION)`).
-   - Features integrated `release` stage controlled via parameter `publishGitHubRelease` (default `true`), which downloads all GeoParquet artifacts from the current run and publishes directly to GitHub Releases using service connection `3c34db30-d57b-42e2-a970-857bd932c6c0`.
+   - Features integrated `release` stage controlled via parameter `publishGitHubRelease` (default `true`), which creates the release record and uploads GeoParquet artifacts in parallel matrix jobs partitioned by geographical continents (`Europe`, `North America`, `South & Central America`, `Asia`, `Africa`, `Oceania & Russia`) directly to GitHub Releases using service connection `3c34db30-d57b-42e2-a970-857bd932c6c0`.
 
 2. **Standalone Manual GitHub Release Pipeline (`azure-pipelines-release.yml` / `addresses-release-pipeline`):**
    - Retained as a fallback pipeline triggered manually on-demand (`trigger: none`) to re-release from specific past build IDs without re-running data extraction.
