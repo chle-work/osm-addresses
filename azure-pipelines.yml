@@ -1007,7 +1007,7 @@ stages:
         # leaves headroom for the GDAL OSM node cache instead of claiming 80%
         # of system memory. Capping threads also caps the number of concurrent
         # sort partitions, and with it peak scratch disk usage.
-        DUCKDB_MEMORY_LIMIT: '4GB'
+        DUCKDB_MEMORY_LIMIT: '5GB'
         DUCKDB_THREADS: '2'
         RESOURCE_LOG: '$(System.DefaultWorkingDirectory)/resource-log-$(COUNTRY_CODE)-$(OSM_REGION).csv'
         RESOURCE_INTERVAL: '15'

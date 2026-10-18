@@ -42,10 +42,7 @@ COPY (
             addr_housenumber                  AS number,
             addr_postcode                     AS postcode,
             addr_city                         AS city,
-            CASE
-                WHEN ST_IsValid(geom) THEN ST_PointOnSurface(geom)
-                ELSE NULL
-            END AS geometry,
+            ST_PointOnSurface(geom)           AS geometry,
             CASE
                 WHEN osm_id IS NOT NULL THEN 'relation'
                 ELSE 'way'
