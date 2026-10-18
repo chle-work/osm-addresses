@@ -17,6 +17,10 @@ COPY (
             ELSE NULL
         END                    AS oneway,
         service                AS service,
+        ST_XMin(geom)          AS bbox_minx,
+        ST_YMin(geom)          AS bbox_miny,
+        ST_XMax(geom)          AS bbox_maxx,
+        ST_YMax(geom)          AS bbox_maxy,
         geom                   AS geometry
     FROM ST_Read(
         '__INPUT_PBF__',
@@ -57,6 +61,7 @@ COPY (
 ) TO '__OUTPUT_PARQUET__' (
     FORMAT PARQUET,
     COMPRESSION 'ZSTD',
+    ROW_GROUP_SIZE 50000,
     KV_METADATA {
         'source': 'OpenStreetMap',
         'origin': 'OpenStreetMap (https://www.openstreetmap.org)',

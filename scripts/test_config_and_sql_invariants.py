@@ -349,7 +349,7 @@ class TestWaterwaysSqlInvariants(unittest.TestCase):
         self.sql_content = read_file(sql_path)
 
     def test_waterways_sql_selects_expected_columns(self):
-        for col in ("relation_id", "member_role", "alt_names", "tags", "waterway", "geometry"):
+        for col in ("relation_id", "member_role", "alt_names", "tags", "waterway", "bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy", "geometry"):
             self.assertIn(
                 col,
                 self.sql_content,
@@ -457,6 +457,45 @@ class TestWaterwaysSqlInvariants(unittest.TestCase):
         self.assertEqual(way_entry["rel_tags"]["name:en"], "Rhine")
         self.assertEqual(way_entry["rel_tags"]["name:am"], "ራይን ወን")
         self.assertEqual(way_entry["rel_tags"]["name:de"], "Rhein, Hauptfluss")
+
+
+class TestSpatialOptimizationInvariants(unittest.TestCase):
+    """Invariants for spatial indexing: BBox/lon-lat projection, Hilbert ordering, and Row Group Size."""
+
+    def test_sql_templates_specify_row_group_size_50000(self):
+        for template_path in SQL_TEMPLATES:
+            basename = os.path.basename(template_path)
+            content = read_file(template_path)
+            self.assertIn(
+                "ROW_GROUP_SIZE 50000",
+                content,
+                f"{basename} must specify 'ROW_GROUP_SIZE 50000' for optimal spatial pruning",
+            )
+
+    def test_all_sql_templates_use_hilbert_sorting(self):
+        for template_path in SQL_TEMPLATES:
+            basename = os.path.basename(template_path)
+            content = read_file(template_path)
+            self.assertRegex(
+                content,
+                r"ORDER BY ST_Hilbert\(",
+                f"{basename} must order output by ST_Hilbert(...) for spatial clustering",
+            )
+
+    def test_roads_sql_projects_bbox_columns(self):
+        roads_sql = read_file(os.path.join(REPO_ROOT, "scripts", "export_roads.sql"))
+        for col in ("bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy"):
+            self.assertIn(col, roads_sql, f"export_roads.sql must project '{col}'")
+
+    def test_addresses_sql_projects_lon_lat(self):
+        addr_sql = read_file(os.path.join(REPO_ROOT, "scripts", "export_addresses.sql"))
+        for col in ("lon", "lat"):
+            self.assertIn(col, addr_sql, f"export_addresses.sql must project '{col}'")
+
+    def test_entrances_sql_projects_lon_lat(self):
+        entr_sql = read_file(os.path.join(REPO_ROOT, "scripts", "export_entrances.sql"))
+        for col in ("lon", "lat"):
+            self.assertIn(col, entr_sql, f"export_entrances.sql must project '{col}'")
 
 
 if __name__ == "__main__":

@@ -10,6 +10,8 @@ COPY (
         number,
         postcode,
         city,
+        ST_X(geometry) AS lon,
+        ST_Y(geometry) AS lat,
         geometry,
         osm_type,
         osm_id
@@ -64,6 +66,7 @@ COPY (
 ) TO '__OUTPUT_PARQUET__' (
     FORMAT PARQUET,
     COMPRESSION 'ZSTD',
+    ROW_GROUP_SIZE 50000,
     KV_METADATA {
         'source': 'OpenStreetMap',
         'origin': 'OpenStreetMap (https://www.openstreetmap.org)',

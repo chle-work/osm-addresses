@@ -43,9 +43,9 @@ REQUIRED_METADATA_KEYS = [
     "osm_data_timestamp",
 ]
 
-ADDRESS_REQUIRED_COLUMNS = ["osm_id", "osm_type", "number", "street", "geometry"]
-ROAD_REQUIRED_COLUMNS = ["osm_id", "osm_type", "highway", "geometry"]
-ENTRANCE_REQUIRED_COLUMNS = ["osm_id", "osm_type", "geometry"]
+ADDRESS_REQUIRED_COLUMNS = ["osm_id", "osm_type", "number", "street", "lon", "lat", "geometry"]
+ROAD_REQUIRED_COLUMNS = ["osm_id", "osm_type", "highway", "bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy", "geometry"]
+ENTRANCE_REQUIRED_COLUMNS = ["osm_id", "osm_type", "lon", "lat", "geometry"]
 WATERWAY_REQUIRED_COLUMNS = [
     "osm_id",
     "osm_type",
@@ -55,6 +55,10 @@ WATERWAY_REQUIRED_COLUMNS = [
     "member_role",
     "alt_names",
     "tags",
+    "bbox_minx",
+    "bbox_miny",
+    "bbox_maxx",
+    "bbox_maxy",
     "geometry",
 ]
 

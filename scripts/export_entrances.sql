@@ -14,6 +14,8 @@ COPY (
         barrier                AS barrier,
         addr_street            AS street,
         addr_housenumber       AS housenumber,
+        ST_X(geom)             AS lon,
+        ST_Y(geom)             AS lat,
         geom                   AS geometry
     FROM ST_Read(
         '__INPUT_PBF__',
@@ -29,6 +31,7 @@ COPY (
 ) TO '__OUTPUT_PARQUET__' (
     FORMAT PARQUET,
     COMPRESSION 'ZSTD',
+    ROW_GROUP_SIZE 50000,
     KV_METADATA {
         'source': 'OpenStreetMap',
         'origin': 'OpenStreetMap (https://www.openstreetmap.org)',
