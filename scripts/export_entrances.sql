@@ -27,7 +27,7 @@ COPY (
           (entrance IS NOT NULL AND entrance NOT IN ('no'))
           OR barrier IN ('gate', 'lift_gate')
       )
-    ORDER BY ST_Hilbert(geom, ST_Extent(ST_Extent_Agg(geom) OVER ()))
+    ORDER BY ST_Hilbert(geom, ST_Extent(ST_MakeEnvelope(-180.0, -90.0, 180.0, 90.0)))
 ) TO '__OUTPUT_PARQUET__' (
     FORMAT PARQUET,
     COMPRESSION 'ZSTD',
