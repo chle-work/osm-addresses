@@ -14,10 +14,32 @@
 # Stages:
 #   warmup  -- Verify container image availability & host disk reclaim
 #   convert -- Per-region PBF -> Parquet conversion (Container-Job-Pattern)
+name: $(Date:yyyyMMdd)$(Rev:.r)
+
 trigger: none
 pr: none
 
 parameters:
+- name: publishGitHubRelease
+  displayName: 'Publish GitHub Release with GeoParquet assets'
+  type: boolean
+  default: true
+- name: releaseTag
+  displayName: 'GitHub Release Tag (use "auto" for build number e.g. 20261018.1)'
+  type: string
+  default: 'auto'
+- name: releaseTitle
+  displayName: 'GitHub Release Title (use "auto" for "Release <tag>")'
+  type: string
+  default: 'auto'
+- name: isDraft
+  displayName: 'Draft Release'
+  type: boolean
+  default: false
+- name: isPreRelease
+  displayName: 'Mark as Pre-release'
+  type: boolean
+  default: true
 - name: skipOsmiumFilter
   displayName: 'Skip Osmium filtering (use pre-filtered PBF pipeline artifacts)'
   type: boolean
@@ -1139,5 +1161,184 @@ stages:
         targetType: 'inline'
         script: |
           rm -rf $(System.DefaultWorkingDirectory)/*
+
+# ---------------------------------------------------------------------------
+# Stage 4: Publish GitHub Release (optional, driven by parameter)
+# ---------------------------------------------------------------------------
+- stage: release
+  displayName: 'Publish GitHub Release'
+  dependsOn: convert
+  condition: and(succeeded('convert'), ${{ eq(parameters.publishGitHubRelease, true) }})
+  jobs:
+  - job: release
+    displayName: 'Create GitHub Release with GeoParquet Assets'
+    timeoutInMinutes: 360
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - checkout: self
+
+    - task: Bash@3
+      displayName: 'Reclaim runner host disk space'
+      inputs:
+        targetType: 'inline'
+        script: |
+          echo "[INFO] Disk space before cleanup:"
+          df -h /
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /usr/local/share/boost \
+            /opt/hostedtoolcache \
+            2>/dev/null || true
+          echo "[INFO] Disk space after cleanup:"
+          df -h /
+
+    # Download build artifacts from current pipeline run
+    - task: DownloadPipelineArtifact@2
+      displayName: 'Download per-region GeoParquet artifacts'
+      inputs:
+        buildType: 'current'
+        itemPattern: 'osm-parquet-*/**'
+        targetPath: '$(System.DefaultWorkingDirectory)/downloads'
+
+    - task: Bash@3
+      displayName: 'Prepare Release Assets & Summary Notes'
+      env:
+        PARAM_RELEASE_TAG: '${{ parameters.releaseTag }}'
+        PARAM_RELEASE_TITLE: '${{ parameters.releaseTitle }}'
+      inputs:
+        targetType: 'inline'
+        script: |
+          set -e
+          mkdir -p release-assets
+
+          # Move already publishable per-region GeoParquet files and clean up the
+          # temporary download directory. Oversized files are partitioned in their
+          # individual build jobs before they are published as artifacts.
+          find downloads -name "*.parquet" -exec mv {} release-assets/ \;
+          rm -rf downloads
+
+          PARQUET_COUNT=$(find release-assets -name "*.parquet" | wc -l)
+          ADDRESS_COUNT=$(find release-assets -name "*.addresses*.parquet" | wc -l)
+          ROAD_COUNT=$(find release-assets -name "*.roads*.parquet" | wc -l)
+          ENTRANCE_COUNT=$(find release-assets -name "*.entrances*.parquet" | wc -l)
+          WATERWAY_COUNT=$(find release-assets -name "*.waterways*.parquet" | wc -l)
+
+          if [ "$PARQUET_COUNT" -eq 0 ]; then
+            echo "****************************************************************"
+            echo " ERROR: No GeoParquet (.parquet) files were found in downloaded artifacts!"
+            echo "****************************************************************"
+            exit 1
+          fi
+
+          echo "[INFO] Found $PARQUET_COUNT GeoParquet file(s) for release ($ADDRESS_COUNT addresses, $ROAD_COUNT roads, $ENTRANCE_COUNT entrances, $WATERWAY_COUNT waterways)."
+
+          # Resolve Release Tag and Title dynamically
+          RELEASE_TAG="$PARAM_RELEASE_TAG"
+          if [ "$RELEASE_TAG" = "auto" ] || [ -z "$RELEASE_TAG" ]; then
+            RELEASE_TAG="$(Build.BuildNumber)"
+          fi
+
+          RELEASE_TITLE="$PARAM_RELEASE_TITLE"
+          if [ "$RELEASE_TITLE" = "auto" ] || [ -z "$RELEASE_TITLE" ]; then
+            RELEASE_TITLE="Release $RELEASE_TAG"
+          fi
+
+          echo "[INFO] Release Tag  : $RELEASE_TAG"
+          echo "[INFO] Release Title: $RELEASE_TITLE"
+
+          echo "##vso[task.setvariable variable=RELEASE_TAG]$RELEASE_TAG"
+          echo "##vso[task.setvariable variable=RELEASE_TITLE]$RELEASE_TITLE"
+
+          # Generate Release Notes Markdown
+          cat <<EOF > release-notes.md
+          ## OSM GeoParquet Release ($RELEASE_TAG)
+
+          Global ZSTD-compressed GeoParquet datasets containing address points, drivable road centerlines, entrance/access nodes, and linear waterways extracted from OpenStreetMap.
+
+          ### Datasets & Schemas
+
+          #### 1. Address Points (\`<CC>_<region>.addresses.parquet\`)
+          | Column | Type | Description |
+          | :--- | :--- | :--- |
+          | **\`street\`** | \`VARCHAR\` | Street name (\`addr:street\` or \`addr:place\`) |
+          | **\`number\`** | \`VARCHAR\` | House number (\`addr:housenumber\`) |
+          | **\`postcode\`** | \`VARCHAR\` | Postal code (\`addr:postcode\`) |
+          | **\`city\`** | \`VARCHAR\` | City / Municipality (\`addr:city\`) |
+          | **\`geometry\`** | \`GEOMETRY\` | Point geometry (WGS84 EPSG:4326, Hilbert-sorted) |
+          | **\`osm_type\`** | \`VARCHAR\` | Source OSM element type (\`node\`, \`way\`, \`relation\`) |
+          | **\`osm_id\`** | \`BIGINT\` | Source OSM element ID |
+
+          #### 2. Road Centerlines (\`<CC>_<region>.roads.parquet\`)
+          | Column | Type | Description |
+          | :--- | :--- | :--- |
+          | **\`osm_id\`** | \`BIGINT\` | Source OSM Way ID |
+          | **\`osm_type\`** | \`VARCHAR\` | Element type (\`way\`) |
+          | **\`name\`** | \`VARCHAR\` | Street name (\`name\` tag) |
+          | **\`highway\`** | \`VARCHAR\` | Highway classification (\`residential\`, \`primary\`, \`service\`, etc.) |
+          | **\`oneway\`** | \`VARCHAR\` | Normalized oneway flag (\`yes\`, \`no\`, \`-1\`) |
+          | **\`service\`** | \`VARCHAR\` | Subtype for service roads (\`driveway\`, \`alley\`, etc.) |
+          | **\`geometry\`** | \`GEOMETRY\` | LineString geometry (WGS84 EPSG:4326, Hilbert-sorted) |
+
+          #### 3. Entrances & Access Gates (\`<CC>_<region>.entrances.parquet\`)
+          | Column | Type | Description |
+          | :--- | :--- | :--- |
+          | **\`osm_id\`** | \`BIGINT\` | Source OSM Node ID |
+          | **\`osm_type\`** | \`VARCHAR\` | Element type (\`node\`) |
+          | **\`name\`** | \`VARCHAR\` | Entrance name |
+          | **\`ref\`** | \`VARCHAR\` | Staircase / door reference code |
+          | **\`entrance\`** | \`VARCHAR\` | Entrance classification (\`main\`, \`yes\`, \`staircase\`, etc.) |
+          | **\`barrier\`** | \`VARCHAR\` | Barrier tag value for gates/access points (\`gate\`, \`lift_gate\`) |
+          | **\`street\`** | \`VARCHAR\` | Street name at entrance |
+          | **\`housenumber\`** | \`VARCHAR\` | House number at entrance |
+          | **\`geometry\`** | \`GEOMETRY\` | Point geometry (WGS84 EPSG:4326, Hilbert-sorted) |
+
+          #### 4. Linear Waterways (\`<CC>_<region>.waterways.parquet\`)
+          | Column | Type | Description |
+          | :--- | :--- | :--- |
+          | **\`osm_id\`** | \`BIGINT\` | Source OSM Way ID |
+          | **\`osm_type\`** | \`VARCHAR\` | Element type (\`way\`) |
+          | **\`name\`** | \`VARCHAR\` | Waterway name (\`name\` tag, coalesced from way or relation) |
+          | **\`waterway\`** | \`VARCHAR\` | Waterway classification (\`river\`, \`canal\`, \`stream\`) |
+          | **\`relation_id\`** | \`BIGINT\` | Parent waterway relation ID (e.g. \`89652\` for Danube) or \`NULL\` |
+          | **\`member_role\`** | \`VARCHAR\` | Role in parent relation (e.g. \`'main_stream'\`, \`'side_stream'\`) or \`NULL\` |
+          | **\`alt_names\`** | \`MAP(VARCHAR, VARCHAR)\` | Localized & alternative names (\`en\`, \`de\`, \`alt_name\`, etc.) |
+          | **\`tags\`** | \`MAP(VARCHAR, VARCHAR)\` | Complete raw OSM tags map (merged from way and parent relation) |
+          | **\`geometry\`** | \`GEOMETRY\` | LineString geometry (WGS84 EPSG:4326, Hilbert-sorted) |
+
+          ### Download Assets
+          - **\`<CC>_<region>.addresses.parquet\`**: Address points ($ADDRESS_COUNT files)
+          - **\`<CC>_<region>.roads.parquet\`**: Drivable road centerlines ($ROAD_COUNT files, partitioned into \`.part<N>.parquet\` where raw size exceeds GitHub's 2 GiB limit)
+          - **\`<CC>_<region>.entrances.parquet\`**: Entrance nodes & gates ($ENTRANCE_COUNT files)
+          - **\`<CC>_<region>.waterways.parquet\`**: Linear waterways ($WATERWAY_COUNT files)
+
+          Total GeoParquet assets in this release: **$PARQUET_COUNT**.
+
+          ---
+          *Built with DuckDB spatial extension and ZSTD compression. Spatially indexed using Hilbert curve ordering.*
+          EOF
+
+          ls -lh release-assets/
+          cat release-notes.md
+
+    - task: GitHubRelease@1
+      displayName: 'Create GitHub Release'
+      inputs:
+        gitHubConnection: '3c34db30-d57b-42e2-a970-857bd932c6c0'
+        repositoryName: '$(Build.Repository.Name)'
+        action: 'create'
+        target: '$(Build.SourceVersion)'
+        tagSource: 'userSpecifiedTag'
+        tag: '$(RELEASE_TAG)'
+        title: '$(RELEASE_TITLE)'
+        releaseNotesSource: 'filePath'
+        releaseNotesFilePath: '$(System.DefaultWorkingDirectory)/release-notes.md'
+        assets: |
+          $(System.DefaultWorkingDirectory)/release-assets/*.parquet
+        assetUploadMode: 'delete'
+        isDraft: ${{ parameters.isDraft }}
+        isPreRelease: ${{ parameters.isPreRelease }}
 
 
