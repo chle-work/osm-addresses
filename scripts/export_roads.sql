@@ -57,7 +57,7 @@ COPY (
       AND (access IS NULL OR access NOT IN ('no'))
       AND (motor_vehicle IS NULL OR motor_vehicle NOT IN ('no'))
       AND (motorcar IS NULL OR motorcar NOT IN ('no'))
-    ORDER BY ST_Hilbert(ST_Centroid(geom))
+    ORDER BY ST_Hilbert(ST_Centroid(geom), ST_Extent(ST_Extent_Agg(geom) OVER ()))
 ) TO '__OUTPUT_PARQUET__' (
     FORMAT PARQUET,
     COMPRESSION 'ZSTD',

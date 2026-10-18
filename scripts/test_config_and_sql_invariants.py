@@ -478,8 +478,8 @@ class TestSpatialOptimizationInvariants(unittest.TestCase):
             content = read_file(template_path)
             self.assertRegex(
                 content,
-                r"ORDER BY ST_Hilbert\(",
-                f"{basename} must order output by ST_Hilbert(...) for spatial clustering",
+                r"ORDER BY ST_Hilbert\([^,]+,\s*ST_Extent\(ST_Extent_Agg\(",
+                f"{basename} must order output by bounded ST_Hilbert(..., ST_Extent(ST_Extent_Agg(...) OVER ())) for accurate spatial clustering",
             )
 
     def test_roads_sql_projects_bbox_columns(self):

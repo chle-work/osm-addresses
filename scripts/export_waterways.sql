@@ -98,7 +98,7 @@ COPY (
       AND ST_IsValid(w.geom)
       AND w.waterway IN ('river', 'canal', 'stream')
       AND COALESCE(w.name, r.rel_tags['name']) IS NOT NULL
-    ORDER BY ST_Hilbert(ST_Centroid(w.geom))
+    ORDER BY ST_Hilbert(ST_Centroid(w.geom), ST_Extent(ST_Extent_Agg(w.geom) OVER ()))
 ) TO '__OUTPUT_PARQUET__' (
     FORMAT PARQUET,
     COMPRESSION 'ZSTD',

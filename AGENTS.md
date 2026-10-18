@@ -97,8 +97,10 @@ To ensure consistent pipeline execution, geographical coverage, and clean Git wo
     - All OPL streams must be pre-indexed via a lightweight streaming Python utility (e.g. `scripts/index_waterway_relations.py`) using `unquote_opl()` (`re.compile(r'%([0-9a-fA-F]{1,6})%')` + `chr(int(cp, 16))`) into clean typed JSONL/Parquet before DuckDB ingestion.
 17. **DuckDB SQL String Literal Escaping & Macro Test Fidelity Invariant:**
     - In DuckDB `.sql` files, double quotes inside single-quoted strings `'...'` MUST NEVER be escaped with backslashes. Use `'"=>"'`, `'","'`, and `'\"'` (for replacing literal escaped quotes) rather than `'\"=>\"'`.
-    - Unit tests asserting SQL macro behavior must NEVER duplicate SQL macro code as hardcoded Python string literals. Tests must extract the macro definitions directly from the production `.sql` files (`self.sql_content.split(...)`) to prevent divergence between test execution and runtime behavior.
-
-
-
-
+18. **DuckDB Bounded ST_Hilbert Spatial Sorting & Row Group Pruning Invariant:**
+    - All GeoParquet export queries producing spatial tables (`export_roads.sql`, `export_addresses.sql`, `export_entrances.sql`, `export_waterways.sql`) MUST order features using bounded Hilbert indexing via `ST_Hilbert(geom, ST_Extent(ST_Extent_Agg(geom) OVER ()))` (or `ST_Centroid(geom)` for complex linestrings/polygons).
+    - **Never call unbounded `ST_Hilbert(geom)`**: Without an explicit bounding box, DuckDB maps the Hilbert curve to the entire IEEE-754 Float32 range (-3.4e38 to +3.4e38), collapsing geographic coordinates into sub-epsilon noise and scattering nearby features across disparate Hilbert values, completely defeating Parquet Row Group pruning (0% pruning).
+    - **Scalar BBox / Coordinate Columns**:
+      - Point datasets (`addresses`, `entrances`) must project scalar `lon = ST_X(geom)` and `lat = ST_Y(geom)` (`DOUBLE`).
+      - Line/Polygon datasets (`roads`, `waterways`) must project `bbox_minx = ST_XMin(geom)`, `bbox_miny = ST_YMin(geom)`, `bbox_maxx = ST_XMax(geom)`, and `bbox_maxy = ST_YMax(geom)` (`DOUBLE`).
+    - **Row Group Sizing**: All `COPY ... TO` statements must specify `ROW_GROUP_SIZE 50000` to ensure tight spatial clustering per block without compromising ZSTD compression.

@@ -62,7 +62,7 @@ COPY (
           AND geom IS NOT NULL
     )
     WHERE geometry IS NOT NULL
-    ORDER BY ST_Hilbert(geometry)
+    ORDER BY ST_Hilbert(geometry, ST_Extent(ST_Extent_Agg(geometry) OVER ()))
 ) TO '__OUTPUT_PARQUET__' (
     FORMAT PARQUET,
     COMPRESSION 'ZSTD',
