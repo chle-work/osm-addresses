@@ -459,6 +459,38 @@ class TestWaterwaysSqlInvariants(unittest.TestCase):
         self.assertEqual(way_entry["rel_tags"]["name:de"], "Rhein, Hauptfluss")
 
 
+class TestParallelReleasePipeline(unittest.TestCase):
+    """The release matrix must safely consume init_release outputs and notes."""
+
+    def test_upload_jobs_map_release_tag_output_as_a_job_variable(self):
+        release_content = read_file(PIPELINE_YAML)
+        self.assertIn(
+            "RELEASE_TAG: $[ dependencies.init_release.outputs['init_vars.RELEASE_TAG'] ]",
+            release_content,
+            "upload jobs must map the init_release tag output at job scope",
+        )
+        self.assertIn(
+            "UPSTREAM_RELEASE_TAG: '$(RELEASE_TAG)'",
+            release_content,
+            "upload steps must consume the resolved job variable through macro expansion",
+        )
+        self.assertNotIn(
+            "UPSTREAM_RELEASE_TAG: '$[ dependencies.init_release.outputs[''init_vars.RELEASE_TAG''] ]'",
+            release_content,
+            "runtime output expressions must not be embedded directly in task environments",
+        )
+
+    def test_upload_jobs_use_the_published_release_notes_file(self):
+        release_content = read_file(PIPELINE_YAML)
+        self.assertIn("artifact: 'release-notes'", release_content)
+        self.assertIn("artifact: 'release-notes'", release_content)
+        self.assertIn(
+            "releaseNotesFilePath: '$(System.DefaultWorkingDirectory)/release-notes/release-notes.md'",
+            release_content,
+            "upload tasks must provide a concrete release-notes file path",
+        )
+
+
 class TestSpatialOptimizationInvariants(unittest.TestCase):
     """Invariants for spatial indexing: BBox/lon-lat projection, Hilbert ordering, and Row Group Size."""
 

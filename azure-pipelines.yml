@@ -1273,6 +1273,13 @@ stages:
 
           cat release-notes.md
 
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish release notes'
+      inputs:
+        targetPath: '$(System.DefaultWorkingDirectory)/release-notes.md'
+        artifact: 'release-notes'
+        publishLocation: 'pipeline'
+
     - task: GitHubRelease@1
       displayName: 'Create Initial GitHub Release'
       inputs:
@@ -1297,6 +1304,8 @@ stages:
     timeoutInMinutes: 360
     pool:
       vmImage: 'ubuntu-latest'
+    variables:
+      RELEASE_TAG: $[ dependencies.init_release.outputs['init_vars.RELEASE_TAG'] ]
     strategy:
       maxParallel: 6
       matrix:
@@ -1539,11 +1548,18 @@ stages:
           $(ARTIFACT_PATTERNS)
         targetPath: '$(System.DefaultWorkingDirectory)/downloads'
 
+    - task: DownloadPipelineArtifact@2
+      displayName: 'Download release notes'
+      inputs:
+        buildType: 'current'
+        artifact: 'release-notes'
+        targetPath: '$(System.DefaultWorkingDirectory)/release-notes'
+
     - task: Bash@3
       displayName: 'Prepare Release Assets ($(REGION_GROUP))'
       env:
         PARAM_RELEASE_TAG: '${{ parameters.releaseTag }}'
-        UPSTREAM_RELEASE_TAG: '$[ dependencies.init_release.outputs[''init_vars.RELEASE_TAG''] ]'
+        UPSTREAM_RELEASE_TAG: '$(RELEASE_TAG)'
       inputs:
         targetType: 'inline'
         script: |
@@ -1582,6 +1598,8 @@ stages:
         target: '$(Build.SourceVersion)'
         tagSource: 'userSpecifiedTag'
         tag: '$(RESOLVED_TAG)'
+        releaseNotesSource: 'filePath'
+        releaseNotesFilePath: '$(System.DefaultWorkingDirectory)/release-notes/release-notes.md'
         assets: |
           $(System.DefaultWorkingDirectory)/release-assets/*.parquet
         assetUploadMode: 'replace'
